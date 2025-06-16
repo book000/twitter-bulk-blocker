@@ -64,6 +64,11 @@ class TwitterAPI:
                 )
                 self._log_response_details(response, screen_name, method_name="get_user_info_retry")
 
+            # 認証エラー検出
+            if response.status_code == 401:
+                print(f"認証エラー検出 ({screen_name}): Cookieが無効です。処理を終了します")
+                raise SystemExit("Authentication failed - Cookie is invalid")
+
             # アカウントロック検出
             if self._is_account_locked(response):
                 print(f"アカウントロック検出 ({screen_name}): 処理を終了します")
@@ -114,6 +119,11 @@ class TwitterAPI:
                     self.USER_BY_REST_ID_ENDPOINT, headers=headers, params=params
                 )
                 self._log_response_details(response, user_id, method_name="get_user_info_by_id_retry")
+
+            # 認証エラー検出
+            if response.status_code == 401:
+                print(f"認証エラー検出 (ID: {user_id}): Cookieが無効です。処理を終了します")
+                raise SystemExit("Authentication failed - Cookie is invalid")
 
             # アカウントロック検出
             if self._is_account_locked(response):
