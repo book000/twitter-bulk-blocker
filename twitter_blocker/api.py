@@ -5,6 +5,7 @@ Twitter API アクセス管理モジュール
 import json
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 import requests
@@ -33,11 +34,22 @@ class TwitterAPI:
     # REST APIエンドポイント
     BLOCKS_CREATE_ENDPOINT = "https://x.com/i/api/1.1/blocks/create.json"
 
-    def __init__(self, cookie_manager: CookieManager):
+    def __init__(self, cookie_manager: CookieManager, cache_dir: str = "/data/cache"):
         self.cookie_manager = cookie_manager
+        self.cache_dir = Path(cache_dir)
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.user_cache_file = self.cache_dir / "user_info_cache.json"
+        self.cache_ttl = 86400  # 24時間（秒）
 
     def get_user_info(self, screen_name: str) -> Optional[Dict[str, Any]]:
         """スクリーンネームからユーザー情報を取得"""
+        # キャッシュから確認
+        cache_key = f"screen_name:{screen_name}"
+        cached_result = self._get_from_cache(cache_key)
+        if cached_result is not None:
+            print(f"[CACHE HIT] {screen_name}: キャッシュからユーザー情報を取得")
+            return cached_result
+        
         try:
             cookies = self.cookie_manager.load_cookies()
             headers = self._build_graphql_headers(cookies)
@@ -83,7 +95,11 @@ class TwitterAPI:
                 raise SystemExit("Account locked - terminating process")
 
             if response.status_code == 200:
-                return self._parse_user_response(response.json(), screen_name)
+                result = self._parse_user_response(response.json(), screen_name)
+                # 成功時はキャッシュに保存
+                if result is not None:
+                    self._save_to_cache(cache_key, result)
+                return result
 
             # ステータスコード別のエラー表示
             error_msg = self._get_detailed_error_message(response, screen_name)
@@ -96,6 +112,13 @@ class TwitterAPI:
 
     def get_user_info_by_id(self, user_id: str) -> Optional[Dict[str, Any]]:
         """ユーザーIDからユーザー情報を取得"""
+        # キャッシュから確認
+        cache_key = f"user_id:{user_id}"
+        cached_result = self._get_from_cache(cache_key)
+        if cached_result is not None:
+            print(f"[CACHE HIT] ID:{user_id}: キャッシュからユーザー情報を取得")
+            return cached_result
+        
         try:
             cookies = self.cookie_manager.load_cookies()
             headers = self._build_graphql_headers(cookies)
@@ -141,7 +164,11 @@ class TwitterAPI:
                 raise SystemExit("Account locked - terminating process")
 
             if response.status_code == 200:
-                return self._parse_user_response(response.json(), user_id=user_id)
+                result = self._parse_user_response(response.json(), user_id=user_id)
+                # 成功時はキャッシュに保存
+                if result is not None:
+                    self._save_to_cache(cache_key, result)
+                return result
 
             # ステータスコード別のエラー表示
             error_msg = self._get_detailed_error_message(response, user_id)
@@ -428,3 +455,87 @@ class TwitterAPI:
         # ヘッダーが取得できない場合はデフォルトの15分
         print("  リセット時刻取得失敗: デフォルト15分待機")
         return 900
+
+    def _load_cache(self) -> Dict[str, Any]:
+        """キャッシュファイルを読み込み"""
+        try:
+            if self.user_cache_file.exists():
+                with open(self.user_cache_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+        except (json.JSONDecodeError, FileNotFoundError):
+            pass
+        return {}
+
+    def _save_cache(self, cache_data: Dict[str, Any]) -> None:
+        """キャッシュファイルに保存"""
+        try:
+            with open(self.user_cache_file, 'w', encoding='utf-8') as f:
+                json.dump(cache_data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"キャッシュ保存エラー: {e}")
+
+    def _get_from_cache(self, cache_key: str) -> Optional[Dict[str, Any]]:
+        """キャッシュからユーザー情報を取得"""
+        cache_data = self._load_cache()
+        
+        if cache_key in cache_data:
+            cached_entry = cache_data[cache_key]
+            cached_time = cached_entry.get("cached_at", 0)
+            current_time = time.time()
+            
+            # TTL期限内かチェック
+            if current_time - cached_time < self.cache_ttl:
+                return cached_entry.get("data")
+            else:
+                # 期限切れのエントリを削除
+                del cache_data[cache_key]
+                self._save_cache(cache_data)
+                print(f"[CACHE EXPIRED] {cache_key}: キャッシュが期限切れです")
+        
+        return None
+
+    def _save_to_cache(self, cache_key: str, user_data: Dict[str, Any]) -> None:
+        """ユーザー情報をキャッシュに保存"""
+        cache_data = self._load_cache()
+        
+        cache_entry = {
+            "data": user_data,
+            "cached_at": time.time()
+        }
+        
+        cache_data[cache_key] = cache_entry
+        self._save_cache(cache_data)
+        print(f"[CACHE SAVE] {cache_key}: ユーザー情報をキャッシュに保存")
+
+    def clear_cache(self) -> None:
+        """キャッシュをクリア"""
+        try:
+            if self.user_cache_file.exists():
+                self.user_cache_file.unlink()
+                print("キャッシュファイルを削除しました")
+        except Exception as e:
+            print(f"キャッシュ削除エラー: {e}")
+
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """キャッシュ統計情報を取得"""
+        cache_data = self._load_cache()
+        current_time = time.time()
+        
+        total_entries = len(cache_data)
+        valid_entries = 0
+        expired_entries = 0
+        
+        for entry in cache_data.values():
+            cached_time = entry.get("cached_at", 0)
+            if current_time - cached_time < self.cache_ttl:
+                valid_entries += 1
+            else:
+                expired_entries += 1
+        
+        return {
+            "total_entries": total_entries,
+            "valid_entries": valid_entries,
+            "expired_entries": expired_entries,
+            "cache_file": str(self.user_cache_file),
+            "cache_ttl_hours": self.cache_ttl / 3600
+        }
