@@ -6,7 +6,7 @@ import json
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import requests
 
@@ -29,6 +29,9 @@ class TwitterAPI:
     )
     USER_BY_REST_ID_ENDPOINT = (
         "https://x.com/i/api/graphql/I5nvpI91ljifos1Y3Lltyg/UserByRestId"
+    )
+    USERS_BY_REST_IDS_ENDPOINT = (
+        "https://x.com/i/api/graphql/lUdRvHzVPvdQQTmWVHYu6Q/UsersByRestIds"
     )
 
     # REST APIエンドポイント
@@ -182,6 +185,166 @@ class TwitterAPI:
         except Exception as e:
             print(f"ユーザー情報取得エラー (ID: {user_id}): {e}")
             return None
+
+    def get_users_info_batch(self, user_ids: List[str], batch_size: int = 50) -> Dict[str, Dict[str, Any]]:
+        """複数ユーザーIDから一括でユーザー情報を取得"""
+        results = {}
+        
+        # キャッシュから取得済みのものをチェック
+        uncached_ids = []
+        for user_id in user_ids:
+            cached_result = self._get_from_cache("user_id", user_id)
+            if cached_result is not None:
+                results[user_id] = cached_result
+                print(f"[CACHE HIT] ID:{user_id}: キャッシュからユーザー情報を取得")
+            else:
+                uncached_ids.append(user_id)
+        
+        if not uncached_ids:
+            print(f"[BATCH] 全{len(user_ids)}ユーザーがキャッシュから取得済み")
+            return results
+        
+        print(f"[BATCH] {len(uncached_ids)}/{len(user_ids)}ユーザーをAPI取得")
+        
+        # 未キャッシュのユーザーを一括取得
+        for i in range(0, len(uncached_ids), batch_size):
+            batch_ids = uncached_ids[i:i + batch_size]
+            batch_results = self._fetch_users_batch(batch_ids)
+            
+            # 結果をマージし、キャッシュに保存
+            for user_id, user_data in batch_results.items():
+                results[user_id] = user_data
+                if user_data:  # Noneでない場合のみキャッシュ
+                    self._save_to_cache("user_id", user_id, user_data)
+        
+        return results
+
+    def _fetch_users_batch(self, user_ids: List[str]) -> Dict[str, Optional[Dict[str, Any]]]:
+        """UsersByRestIds APIで一括ユーザー情報取得"""
+        try:
+            cookies = self.cookie_manager.load_cookies()
+            headers = self._build_graphql_headers(cookies)
+
+            params = {
+                "variables": json.dumps({
+                    "userIds": user_ids,
+                    "withSafetyModeUserFields": True,
+                    "withSuperFollowsUserFields": True,
+                }),
+                "features": json.dumps(self._get_graphql_features()),
+            }
+
+            response = requests.get(
+                self.USERS_BY_REST_IDS_ENDPOINT, headers=headers, params=params
+            )
+
+            # 詳細なエラー情報を記録
+            self._log_response_details(response, f"batch({len(user_ids)}users)", method_name="get_users_batch")
+
+            # レートリミット検出
+            if response.status_code == 429:
+                wait_seconds = self._calculate_wait_time(response)
+                wait_minutes = wait_seconds / 60
+                print(f"レートリミット検出 (batch): {wait_minutes:.1f}分間待機します")
+                time.sleep(wait_seconds)
+                # 1回だけリトライ
+                response = requests.get(
+                    self.USERS_BY_REST_IDS_ENDPOINT, headers=headers, params=params
+                )
+                self._log_response_details(response, f"batch({len(user_ids)}users)", method_name="get_users_batch_retry")
+
+            # 認証エラー検出
+            if response.status_code == 401:
+                print(f"認証エラー検出 (batch): Cookieが無効です。処理を終了します")
+                raise SystemExit("Authentication failed - Cookie is invalid")
+
+            # アカウントロック検出
+            if self._is_account_locked(response):
+                print(f"アカウントロック検出 (batch): 処理を終了します")
+                raise SystemExit("Account locked - terminating process")
+
+            if response.status_code == 200:
+                return self._parse_users_batch_response(response.json(), user_ids)
+
+            # ステータスコード別のエラー表示
+            error_msg = self._get_detailed_error_message(response, f"batch({len(user_ids)}users)")
+            print(f"一括ユーザー情報取得失敗: {error_msg}")
+            
+            # エラー時は空の辞書を返す（個別取得に自動フォールバック）
+            return {user_id: None for user_id in user_ids}
+
+        except Exception as e:
+            print(f"一括ユーザー情報取得エラー: {e}")
+            return {user_id: None for user_id in user_ids}
+
+    def _parse_users_batch_response(self, data: Dict[str, Any], requested_ids: List[str]) -> Dict[str, Optional[Dict[str, Any]]]:
+        """一括ユーザー情報レスポンスを解析"""
+        results = {}
+        
+        if "data" in data and "users" in data["data"]:
+            users_data = data["data"]["users"]
+            
+            for user_entry in users_data:
+                if "result" in user_entry:
+                    result = user_entry["result"]
+                    
+                    # 各ユーザーを個別の_parse_user_responseで処理
+                    user_info = self._parse_single_user_from_batch(result)
+                    
+                    if user_info and user_info.get("id"):
+                        results[user_info["id"]] = user_info
+        
+        # リクエストされたIDでレスポンスにないものはNoneとして記録
+        for user_id in requested_ids:
+            if user_id not in results:
+                results[user_id] = None
+        
+        return results
+
+    def _parse_single_user_from_batch(self, result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """一括取得レスポンスから単一ユーザー情報を解析"""
+        # ユーザーのTypeNameをチェック
+        typename = result.get("__typename", "User")
+        user_status = "active"
+
+        if typename == "UserUnavailable":
+            # ユーザーが利用不可
+            user_status = "unavailable"
+            if "reason" in result:
+                user_status = result["reason"].lower()
+
+            return {
+                "id": result.get("rest_id"),
+                "screen_name": None,
+                "name": None,
+                "user_status": user_status,
+                "following": False,
+                "followed_by": False,
+                "blocking": False,
+                "blocked_by": False,
+                "protected": False,
+                "unavailable": True,
+            }
+
+        if "legacy" in result:
+            legacy = result["legacy"]
+
+            return {
+                "id": (
+                    legacy.get("id_str") or result.get("rest_id")
+                ),
+                "screen_name": legacy.get("screen_name"),
+                "name": legacy.get("name"),
+                "user_status": user_status,
+                "following": legacy.get("following", False),
+                "followed_by": legacy.get("followed_by", False),
+                "blocking": legacy.get("blocking", False),
+                "blocked_by": legacy.get("blocked_by", False),
+                "protected": legacy.get("protected", False),
+                "unavailable": False,
+            }
+
+        return None
 
     def block_user(self, user_id: str, screen_name: str) -> Dict[str, Any]:
         """REST APIでユーザーをブロック"""
