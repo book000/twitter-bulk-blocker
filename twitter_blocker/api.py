@@ -243,18 +243,21 @@ class TwitterAPI:
             else:
                 uncached_names.append(screen_name)
         
-        # Step 2: 未キャッシュのscreen_nameのlookupを取得
+        # Step 2: 未キャッシュのscreen_nameのlookupを個別取得
         if uncached_names:
             print(f"[LOOKUP] {len(uncached_names)}件のscreen_name -> user_id変換を実行")
-            for i in range(0, len(uncached_names), batch_size):
-                batch_names = uncached_names[i:i + batch_size]
-                batch_lookups = self._fetch_screen_name_lookups(batch_names)
+            for screen_name in uncached_names:
+                user_info = self._fetch_single_screen_name_lookup(screen_name)
+                if user_info and user_info.get('id'):
+                    user_id = user_info['id']
+                    user_id_mappings[screen_name] = user_id
+                    # lookupキャッシュに保存
+                    self._save_lookup_to_cache(screen_name, user_id)
+                    print(f"[LOOKUP] {screen_name} -> {user_id}")
                 
-                for screen_name, user_id in batch_lookups.items():
-                    if user_id:
-                        user_id_mappings[screen_name] = user_id
-                        # lookupキャッシュに保存
-                        self._save_lookup_to_cache(screen_name, user_id)
+                # レート制限対策のため短い待機
+                if len(uncached_names) > 1:
+                    time.sleep(0.1)
         
         # Step 3: user_idから関係情報を一括取得
         user_ids = list(user_id_mappings.values())
@@ -458,24 +461,6 @@ class TwitterAPI:
         
         return results
 
-    def _fetch_screen_name_lookups(self, screen_names: List[str]) -> Dict[str, Optional[str]]:
-        """複数のscreen_nameからuser_idを取得（lookup専用）"""
-        results = {}
-        
-        for screen_name in screen_names:
-            try:
-                user_info = self._fetch_single_screen_name_lookup(screen_name)
-                results[screen_name] = user_info.get('id') if user_info else None
-                
-                # 短い間隔で待機（レート制限対策）
-                if len(screen_names) > 1:
-                    time.sleep(0.1)
-                    
-            except Exception as e:
-                print(f"  ✗ {screen_name}: lookup失敗 - {e}")
-                results[screen_name] = None
-        
-        return results
 
     def _fetch_single_screen_name_lookup(self, screen_name: str) -> Optional[Dict[str, Any]]:
         """単一のscreen_nameからuser_idを取得（lookup専用・関係情報なし）"""
