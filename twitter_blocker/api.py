@@ -902,3 +902,95 @@ class TwitterAPI:
                 pass
         return False
 
+    def _get_lookup_from_cache(self, screen_name: str) -> Optional[Dict[str, Any]]:
+        """lookupキャッシュからscreen_name -> user_idマッピングを取得"""
+        try:
+            cache_file = self.lookups_cache_dir / f"{screen_name}.json"
+            if cache_file.exists():
+                # TTLチェック
+                if time.time() - cache_file.stat().st_mtime < self.cache_ttl:
+                    with open(cache_file, 'r', encoding='utf-8') as f:
+                        return json.load(f)
+            return None
+        except Exception:
+            return None
+
+    def _save_lookup_to_cache(self, screen_name: str, user_id: str) -> None:
+        """lookupキャッシュにscreen_name -> user_idマッピングを保存"""
+        try:
+            cache_file = self.lookups_cache_dir / f"{screen_name}.json"
+            data = {"user_id": user_id, "screen_name": screen_name}
+            with open(cache_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    def _save_profile_to_cache(self, user_id: str, user_data: Dict[str, Any]) -> None:
+        """プロフィールキャッシュに基本情報を保存"""
+        try:
+            cache_file = self.profiles_cache_dir / f"{user_id}.json"
+            # 関係情報を除いた基本情報のみ保存
+            profile_data = {
+                "id": user_data.get("id"),
+                "screen_name": user_data.get("screen_name"),
+                "name": user_data.get("name"),
+                "user_status": user_data.get("user_status"),
+                "protected": user_data.get("protected"),
+                "unavailable": user_data.get("unavailable"),
+            }
+            with open(cache_file, 'w', encoding='utf-8') as f:
+                json.dump(profile_data, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    def _save_relationship_to_cache(self, user_id: str, user_data: Dict[str, Any]) -> None:
+        """関係情報キャッシュに関係データを保存（ログインユーザー別）"""
+        try:
+            login_user_id = self._get_login_user_id()
+            user_cache_dir = self.relationships_cache_dir / login_user_id
+            user_cache_dir.mkdir(parents=True, exist_ok=True)
+            
+            cache_file = user_cache_dir / f"{user_id}.json"
+            # 関係情報のみ保存
+            relationship_data = {
+                "following": user_data.get("following"),
+                "followed_by": user_data.get("followed_by"),
+                "blocking": user_data.get("blocking"),
+                "blocked_by": user_data.get("blocked_by"),
+            }
+            with open(cache_file, 'w', encoding='utf-8') as f:
+                json.dump(relationship_data, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    def _combine_profile_and_relationship(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """プロフィール情報と関係情報を結合"""
+        try:
+            # プロフィール情報を取得
+            profile_file = self.profiles_cache_dir / f"{user_id}.json"
+            if not profile_file.exists():
+                return None
+            
+            # TTLチェック
+            if time.time() - profile_file.stat().st_mtime >= self.cache_ttl:
+                return None
+            
+            with open(profile_file, 'r', encoding='utf-8') as f:
+                profile_data = json.load(f)
+            
+            # 関係情報を取得
+            login_user_id = self._get_login_user_id()
+            relationship_file = self.relationships_cache_dir / login_user_id / f"{user_id}.json"
+            
+            if relationship_file.exists() and time.time() - relationship_file.stat().st_mtime < self.cache_ttl:
+                with open(relationship_file, 'r', encoding='utf-8') as f:
+                    relationship_data = json.load(f)
+                
+                # 結合
+                combined_data = {**profile_data, **relationship_data}
+                return combined_data
+            
+            return None
+        except Exception:
+            return None
+
