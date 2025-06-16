@@ -3,6 +3,7 @@ Twitter API アクセス管理モジュール
 """
 
 import json
+import time
 from typing import Any, Dict, Optional
 
 import requests
@@ -50,9 +51,30 @@ class TwitterAPI:
                 self.USER_BY_SCREEN_NAME_ENDPOINT, headers=headers, params=params
             )
 
+            # 詳細なエラー情報を記録
+            self._log_response_details(response, screen_name, method_name="get_user_info")
+
+            # レートリミット検出
+            if response.status_code == 429:
+                print(f"レートリミット検出 ({screen_name}): 15分間待機します")
+                time.sleep(900)  # 15分待機
+                # 1回だけリトライ
+                response = requests.get(
+                    self.USER_BY_SCREEN_NAME_ENDPOINT, headers=headers, params=params
+                )
+                self._log_response_details(response, screen_name, method_name="get_user_info_retry")
+
+            # アカウントロック検出
+            if self._is_account_locked(response):
+                print(f"アカウントロック検出 ({screen_name}): 処理を終了します")
+                raise SystemExit("Account locked - terminating process")
+
             if response.status_code == 200:
                 return self._parse_user_response(response.json(), screen_name)
 
+            # ステータスコード別のエラー表示
+            error_msg = self._get_detailed_error_message(response, screen_name)
+            print(f"ユーザー情報取得失敗 ({screen_name}): {error_msg}")
             return None
 
         except Exception as e:
@@ -80,9 +102,30 @@ class TwitterAPI:
                 self.USER_BY_REST_ID_ENDPOINT, headers=headers, params=params
             )
 
+            # 詳細なエラー情報を記録
+            self._log_response_details(response, user_id, method_name="get_user_info_by_id")
+
+            # レートリミット検出
+            if response.status_code == 429:
+                print(f"レートリミット検出 (ID: {user_id}): 15分間待機します")
+                time.sleep(900)  # 15分待機
+                # 1回だけリトライ
+                response = requests.get(
+                    self.USER_BY_REST_ID_ENDPOINT, headers=headers, params=params
+                )
+                self._log_response_details(response, user_id, method_name="get_user_info_by_id_retry")
+
+            # アカウントロック検出
+            if self._is_account_locked(response):
+                print(f"アカウントロック検出 (ID: {user_id}): 処理を終了します")
+                raise SystemExit("Account locked - terminating process")
+
             if response.status_code == 200:
                 return self._parse_user_response(response.json(), user_id=user_id)
 
+            # ステータスコード別のエラー表示
+            error_msg = self._get_detailed_error_message(response, user_id)
+            print(f"ユーザー情報取得失敗 (ID: {user_id}): {error_msg}")
             return None
 
         except Exception as e:
@@ -253,3 +296,80 @@ class TwitterAPI:
                     }
 
         return None
+
+    def _log_response_details(self, response: requests.Response, identifier: str, method_name: str) -> None:
+        """レスポンス詳細をログ出力"""
+        print(f"[{method_name}] {identifier}: HTTP {response.status_code}")
+        
+        # ヘッダー情報（レート制限関連）
+        if hasattr(response, 'headers'):
+            rate_limit_remaining = response.headers.get('x-rate-limit-remaining')
+            rate_limit_reset = response.headers.get('x-rate-limit-reset')
+        else:
+            rate_limit_remaining = None
+            rate_limit_reset = None
+        
+        if rate_limit_remaining is not None:
+            print(f"  レート制限残り: {rate_limit_remaining}")
+        if rate_limit_reset is not None:
+            print(f"  レート制限リセット: {rate_limit_reset}")
+
+        # エラー時の詳細情報
+        if hasattr(response, 'status_code') and response.status_code >= 400:
+            try:
+                error_data = response.json()
+                if 'errors' in error_data:
+                    for error in error_data['errors']:
+                        print(f"  エラー詳細: {error.get('message', 'Unknown error')}")
+            except:
+                if hasattr(response, 'text'):
+                    print(f"  レスポンステキスト: {response.text[:200]}")
+                else:
+                    print(f"  レスポンス詳細取得不可")
+
+    def _get_detailed_error_message(self, response: requests.Response, identifier: str) -> str:
+        """詳細なエラーメッセージを生成"""
+        status_messages = {
+            400: "不正なリクエスト",
+            401: "認証エラー（Cookieが無効）",
+            403: "アクセス拒否（アカウント制限の可能性）",
+            404: "ユーザーが見つからない",
+            429: "レートリミット（API制限）",
+            500: "サーバー内部エラー",
+            502: "Bad Gateway",
+            503: "サービス利用不可",
+            504: "Gateway Timeout"
+        }
+        
+        base_msg = status_messages.get(response.status_code, f"HTTP {response.status_code}")
+        
+        # JSONレスポンスからエラー詳細を取得
+        try:
+            if hasattr(response, 'json'):
+                error_data = response.json()
+                if 'errors' in error_data and error_data['errors']:
+                    error_details = ', '.join([error.get('message', '') for error in error_data['errors']])
+                    return f"{base_msg} - {error_details}"
+        except:
+            pass
+            
+        return base_msg
+
+    def _is_account_locked(self, response: requests.Response) -> bool:
+        """アカウントロック状態を検出"""
+        # HTTP 403 + 特定のエラーメッセージでアカウントロックを判定
+        if hasattr(response, 'status_code') and response.status_code == 403:
+            try:
+                if hasattr(response, 'json'):
+                    error_data = response.json()
+                    if 'errors' in error_data:
+                        for error in error_data['errors']:
+                            error_msg = error.get('message', '').lower()
+                            if any(keyword in error_msg for keyword in [
+                                'account locked', 'account suspended', 'your account',
+                                'temporarily locked', 'restricted'
+                            ]):
+                                return True
+            except:
+                pass
+        return False

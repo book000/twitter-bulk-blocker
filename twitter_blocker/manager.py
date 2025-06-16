@@ -185,7 +185,7 @@ class BulkBlockManager:
                 user_info = self.api.get_user_info(user_identifier)
 
             if not user_info:
-                print("  ✗ エラー: ユーザー情報取得失敗")
+                print("  ✗ エラー: ユーザー情報取得失敗（詳細は上記ログを参照）")
                 stats["errors"] += 1
                 fallback_screen_name = (
                     str(user_identifier) if user_format == "screen_name" else None
@@ -250,7 +250,7 @@ class BulkBlockManager:
             user_info = self.api.get_user_info(screen_name)
 
             if not user_info:
-                print("  ✗ ユーザー情報取得失敗")
+                print("  ✗ ユーザー情報取得失敗（詳細は上記ログを参照）")
                 stats["errors"] += 1
                 self.database.record_block_result(
                     screen_name,
