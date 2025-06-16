@@ -39,7 +39,7 @@ class TwitterAPI:
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.user_cache_file = self.cache_dir / "user_info_cache.json"
-        self.cache_ttl = 86400  # 24時間（秒）
+        self.cache_ttl = 2592000  # 30日間（秒）
 
     def get_user_info(self, screen_name: str) -> Optional[Dict[str, Any]]:
         """スクリーンネームからユーザー情報を取得"""
@@ -537,5 +537,5 @@ class TwitterAPI:
             "valid_entries": valid_entries,
             "expired_entries": expired_entries,
             "cache_file": str(self.user_cache_file),
-            "cache_ttl_hours": self.cache_ttl / 3600
+            "cache_ttl_days": self.cache_ttl / 86400
         }
