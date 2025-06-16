@@ -282,9 +282,8 @@ class TwitterAPI:
 
                 return {
                     "id": (
-                        legacy.get("id_str") or result.get("rest_id") or str(user_id)
-                        if user_id
-                        else None
+                        legacy.get("id_str") or result.get("rest_id") or 
+                        (str(user_id) if user_id else None)
                     ),
                     "screen_name": legacy.get("screen_name") or screen_name,
                     "name": legacy.get("name"),
