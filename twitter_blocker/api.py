@@ -38,14 +38,19 @@ class TwitterAPI:
         self.cookie_manager = cookie_manager
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
-        self.user_cache_file = self.cache_dir / "user_info_cache.json"
+        
+        # ディレクトリ構造の作成
+        self.screen_name_cache_dir = self.cache_dir / "screen_name"
+        self.user_id_cache_dir = self.cache_dir / "user_id"
+        self.screen_name_cache_dir.mkdir(parents=True, exist_ok=True)
+        self.user_id_cache_dir.mkdir(parents=True, exist_ok=True)
+        
         self.cache_ttl = 2592000  # 30日間（秒）
 
     def get_user_info(self, screen_name: str) -> Optional[Dict[str, Any]]:
         """スクリーンネームからユーザー情報を取得"""
         # キャッシュから確認
-        cache_key = f"screen_name:{screen_name}"
-        cached_result = self._get_from_cache(cache_key)
+        cached_result = self._get_from_cache("screen_name", screen_name)
         if cached_result is not None:
             print(f"[CACHE HIT] {screen_name}: キャッシュからユーザー情報を取得")
             return cached_result
@@ -98,7 +103,7 @@ class TwitterAPI:
                 result = self._parse_user_response(response.json(), screen_name)
                 # 成功時はキャッシュに保存
                 if result is not None:
-                    self._save_to_cache(cache_key, result)
+                    self._save_to_cache("screen_name", screen_name, result)
                 return result
 
             # ステータスコード別のエラー表示
@@ -113,8 +118,7 @@ class TwitterAPI:
     def get_user_info_by_id(self, user_id: str) -> Optional[Dict[str, Any]]:
         """ユーザーIDからユーザー情報を取得"""
         # キャッシュから確認
-        cache_key = f"user_id:{user_id}"
-        cached_result = self._get_from_cache(cache_key)
+        cached_result = self._get_from_cache("user_id", user_id)
         if cached_result is not None:
             print(f"[CACHE HIT] ID:{user_id}: キャッシュからユーザー情報を取得")
             return cached_result
@@ -167,7 +171,7 @@ class TwitterAPI:
                 result = self._parse_user_response(response.json(), user_id=user_id)
                 # 成功時はキャッシュに保存
                 if result is not None:
-                    self._save_to_cache(cache_key, result)
+                    self._save_to_cache("user_id", user_id, result)
                 return result
 
             # ステータスコード別のエラー表示
@@ -456,86 +460,118 @@ class TwitterAPI:
         print("  リセット時刻取得失敗: デフォルト15分待機")
         return 900
 
-    def _load_cache(self) -> Dict[str, Any]:
-        """キャッシュファイルを読み込み"""
-        try:
-            if self.user_cache_file.exists():
-                with open(self.user_cache_file, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-        except (json.JSONDecodeError, FileNotFoundError):
-            pass
-        return {}
-
-    def _save_cache(self, cache_data: Dict[str, Any]) -> None:
-        """キャッシュファイルに保存"""
-        try:
-            with open(self.user_cache_file, 'w', encoding='utf-8') as f:
-                json.dump(cache_data, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            print(f"キャッシュ保存エラー: {e}")
-
-    def _get_from_cache(self, cache_key: str) -> Optional[Dict[str, Any]]:
-        """キャッシュからユーザー情報を取得"""
-        cache_data = self._load_cache()
+    def _get_cache_file_path(self, cache_type: str, identifier: str) -> Path:
+        """キャッシュファイルのパスを取得"""
+        # ファイル名に使えない文字をサニタイズ
+        safe_identifier = "".join(c for c in identifier if c.isalnum() or c in "._-")
         
-        if cache_key in cache_data:
-            cached_entry = cache_data[cache_key]
-            cached_time = cached_entry.get("cached_at", 0)
-            current_time = time.time()
-            
-            # TTL期限内かチェック
-            if current_time - cached_time < self.cache_ttl:
-                return cached_entry.get("data")
-            else:
-                # 期限切れのエントリを削除
-                del cache_data[cache_key]
-                self._save_cache(cache_data)
-                print(f"[CACHE EXPIRED] {cache_key}: キャッシュが期限切れです")
+        if cache_type == "screen_name":
+            return self.screen_name_cache_dir / f"{safe_identifier}.json"
+        elif cache_type == "user_id":
+            return self.user_id_cache_dir / f"{safe_identifier}.json"
+        else:
+            raise ValueError(f"Unsupported cache type: {cache_type}")
+
+    def _get_from_cache(self, cache_type: str, identifier: str) -> Optional[Dict[str, Any]]:
+        """キャッシュからユーザー情報を取得"""
+        cache_file = self._get_cache_file_path(cache_type, identifier)
+        
+        try:
+            if cache_file.exists():
+                # ファイル更新時刻をTTLチェックに使用
+                file_mtime = cache_file.stat().st_mtime
+                current_time = time.time()
+                
+                # TTL期限内かチェック
+                if current_time - file_mtime < self.cache_ttl:
+                    with open(cache_file, 'r', encoding='utf-8') as f:
+                        return json.load(f)
+                else:
+                    # 期限切れのファイルを削除
+                    cache_file.unlink()
+                    print(f"[CACHE EXPIRED] {cache_type}:{identifier}: キャッシュが期限切れです")
+        except (json.JSONDecodeError, FileNotFoundError, PermissionError) as e:
+            # 破損ファイルや読み取りエラーの場合は削除
+            if cache_file.exists():
+                try:
+                    cache_file.unlink()
+                except:
+                    pass
         
         return None
 
-    def _save_to_cache(self, cache_key: str, user_data: Dict[str, Any]) -> None:
+    def _save_to_cache(self, cache_type: str, identifier: str, user_data: Dict[str, Any]) -> None:
         """ユーザー情報をキャッシュに保存"""
-        cache_data = self._load_cache()
+        cache_file = self._get_cache_file_path(cache_type, identifier)
         
-        cache_entry = {
-            "data": user_data,
-            "cached_at": time.time()
-        }
-        
-        cache_data[cache_key] = cache_entry
-        self._save_cache(cache_data)
-        print(f"[CACHE SAVE] {cache_key}: ユーザー情報をキャッシュに保存")
+        try:
+            # ディレクトリが存在しない場合は作成
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
+            
+            with open(cache_file, 'w', encoding='utf-8') as f:
+                json.dump(user_data, f, ensure_ascii=False, indent=2)
+            print(f"[CACHE SAVE] {cache_type}:{identifier}: ユーザー情報をキャッシュに保存")
+        except Exception as e:
+            print(f"キャッシュ保存エラー ({cache_type}:{identifier}): {e}")
 
     def clear_cache(self) -> None:
         """キャッシュをクリア"""
         try:
-            if self.user_cache_file.exists():
-                self.user_cache_file.unlink()
-                print("キャッシュファイルを削除しました")
+            deleted_count = 0
+            
+            # screen_nameキャッシュをクリア
+            for cache_file in self.screen_name_cache_dir.glob("*.json"):
+                cache_file.unlink()
+                deleted_count += 1
+            
+            # user_idキャッシュをクリア
+            for cache_file in self.user_id_cache_dir.glob("*.json"):
+                cache_file.unlink()
+                deleted_count += 1
+            
+            print(f"キャッシュファイルを削除しました ({deleted_count}ファイル)")
         except Exception as e:
             print(f"キャッシュ削除エラー: {e}")
 
     def get_cache_stats(self) -> Dict[str, Any]:
         """キャッシュ統計情報を取得"""
-        cache_data = self._load_cache()
         current_time = time.time()
         
-        total_entries = len(cache_data)
+        total_entries = 0
         valid_entries = 0
         expired_entries = 0
         
-        for entry in cache_data.values():
-            cached_time = entry.get("cached_at", 0)
-            if current_time - cached_time < self.cache_ttl:
-                valid_entries += 1
-            else:
+        # screen_nameキャッシュを確認
+        for cache_file in self.screen_name_cache_dir.glob("*.json"):
+            total_entries += 1
+            try:
+                file_mtime = cache_file.stat().st_mtime
+                if current_time - file_mtime < self.cache_ttl:
+                    valid_entries += 1
+                else:
+                    expired_entries += 1
+            except:
+                expired_entries += 1
+        
+        # user_idキャッシュを確認
+        for cache_file in self.user_id_cache_dir.glob("*.json"):
+            total_entries += 1
+            try:
+                file_mtime = cache_file.stat().st_mtime
+                if current_time - file_mtime < self.cache_ttl:
+                    valid_entries += 1
+                else:
+                    expired_entries += 1
+            except:
                 expired_entries += 1
         
         return {
             "total_entries": total_entries,
             "valid_entries": valid_entries,
             "expired_entries": expired_entries,
-            "cache_file": str(self.user_cache_file),
+            "cache_dirs": {
+                "screen_name": str(self.screen_name_cache_dir),
+                "user_id": str(self.user_id_cache_dir)
+            },
             "cache_ttl_days": self.cache_ttl / 86400
         }
