@@ -1,9 +1,10 @@
 """
-データベース管理モジュール
+データベース管理モジュール（修正版）
 """
 
 import sqlite3
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 
@@ -16,47 +17,59 @@ class DatabaseManager:
 
     def init_database(self) -> None:
         """データベースを初期化"""
-        conn = sqlite3.connect(self.db_file)
-        cursor = conn.cursor()
+        try:
+            # データベースファイルのディレクトリを確保
+            db_path = Path(self.db_file)
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # データベース接続を試行
+            conn = sqlite3.connect(self.db_file)
+            cursor = conn.cursor()
 
-        # ブロック履歴テーブル
-        cursor.execute(
+            # ブロック履歴テーブル
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS block_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    screen_name TEXT NOT NULL,
+                    user_id TEXT,
+                    display_name TEXT,
+                    blocked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    status TEXT DEFAULT 'blocked',
+                    response_code INTEGER,
+                    error_message TEXT,
+                    retry_count INTEGER DEFAULT 0,
+                    last_retry_at TIMESTAMP,
+                    user_status TEXT,
+                    UNIQUE(user_id)
+                )
             """
-            CREATE TABLE IF NOT EXISTS block_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                screen_name TEXT NOT NULL,
-                user_id TEXT,
-                display_name TEXT,
-                blocked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                status TEXT DEFAULT 'blocked',
-                response_code INTEGER,
-                error_message TEXT,
-                retry_count INTEGER DEFAULT 0,
-                last_retry_at TIMESTAMP,
-                user_status TEXT,
-                UNIQUE(user_id)
             )
-        """
-        )
 
-        # 処理ログテーブル
-        cursor.execute(
+            # 処理ログテーブル
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS process_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_start TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    total_targets INTEGER,
+                    processed INTEGER DEFAULT 0,
+                    blocked INTEGER DEFAULT 0,
+                    skipped INTEGER DEFAULT 0,
+                    errors INTEGER DEFAULT 0,
+                    completed BOOLEAN DEFAULT FALSE
+                )
             """
-            CREATE TABLE IF NOT EXISTS process_log (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_start TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                total_targets INTEGER,
-                processed INTEGER DEFAULT 0,
-                blocked INTEGER DEFAULT 0,
-                skipped INTEGER DEFAULT 0,
-                errors INTEGER DEFAULT 0,
-                completed BOOLEAN DEFAULT FALSE
             )
-        """
-        )
 
-        conn.commit()
-        conn.close()
+            conn.commit()
+            conn.close()
+            print(f"データベース初期化完了: {self.db_file}")
+        except Exception as e:
+            if 'conn' in locals():
+                conn.close()
+            print(f"データベース初期化エラー: {e}")
+            raise
 
     def is_already_blocked(
         self, identifier: str, user_format: str = "screen_name"
