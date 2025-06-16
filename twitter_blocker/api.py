@@ -4,9 +4,15 @@ Twitter API アクセス管理モジュール
 
 import json
 import time
+from datetime import datetime
 from typing import Any, Dict, Optional
 
 import requests
+
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    from backports.zoneinfo import ZoneInfo
 
 from .config import CookieManager
 
@@ -322,7 +328,14 @@ class TwitterAPI:
         if rate_limit_remaining is not None:
             print(f"  レート制限残り: {rate_limit_remaining}")
         if rate_limit_reset is not None:
-            print(f"  レート制限リセット: {rate_limit_reset}")
+            # UNIXタイムスタンプをAsia/Tokyoタイムゾーンで表示
+            try:
+                reset_timestamp = int(rate_limit_reset)
+                reset_datetime = datetime.fromtimestamp(reset_timestamp, tz=ZoneInfo("Asia/Tokyo"))
+                formatted_time = reset_datetime.strftime("%Y-%m-%d %H:%M:%S JST")
+                print(f"  レート制限リセット: {rate_limit_reset} ({formatted_time})")
+            except (ValueError, TypeError):
+                print(f"  レート制限リセット: {rate_limit_reset}")
 
         # エラー時の詳細情報
         if hasattr(response, 'status_code') and response.status_code >= 400:
