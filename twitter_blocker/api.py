@@ -62,8 +62,10 @@ class TwitterAPI:
 
             # レートリミット検出
             if response.status_code == 429:
-                print(f"レートリミット検出 ({screen_name}): 15分間待機します")
-                time.sleep(900)  # 15分待機
+                wait_seconds = self._calculate_wait_time(response)
+                wait_minutes = wait_seconds / 60
+                print(f"レートリミット検出 ({screen_name}): {wait_minutes:.1f}分間待機します")
+                time.sleep(wait_seconds)
                 # 1回だけリトライ
                 response = requests.get(
                     self.USER_BY_SCREEN_NAME_ENDPOINT, headers=headers, params=params
@@ -118,8 +120,10 @@ class TwitterAPI:
 
             # レートリミット検出
             if response.status_code == 429:
-                print(f"レートリミット検出 (ID: {user_id}): 15分間待機します")
-                time.sleep(900)  # 15分待機
+                wait_seconds = self._calculate_wait_time(response)
+                wait_minutes = wait_seconds / 60
+                print(f"レートリミット検出 (ID: {user_id}): {wait_minutes:.1f}分間待機します")
+                time.sleep(wait_seconds)
                 # 1回だけリトライ
                 response = requests.get(
                     self.USER_BY_REST_ID_ENDPOINT, headers=headers, params=params
@@ -396,3 +400,32 @@ class TwitterAPI:
             except:
                 pass
         return False
+
+    def _calculate_wait_time(self, response: requests.Response, buffer_seconds: int = 60) -> int:
+        """レートリミットリセット時刻に基づいて適切な待機時間を計算"""
+        # x-rate-limit-resetヘッダーからリセット時刻を取得
+        if hasattr(response, 'headers'):
+            rate_limit_reset = response.headers.get('x-rate-limit-reset')
+            if rate_limit_reset:
+                try:
+                    reset_timestamp = int(rate_limit_reset)
+                    current_timestamp = int(time.time())
+                    
+                    # リセット時刻まての時間を計算
+                    wait_seconds = reset_timestamp - current_timestamp
+                    
+                    # バッファ時間を追加（デフォルト60秒）
+                    wait_seconds += buffer_seconds
+                    
+                    # 最小待機時間は60秒、最大は30分に制限
+                    wait_seconds = max(60, min(wait_seconds, 1800))
+                    
+                    print(f"  計算された待機時間: {wait_seconds}秒 (リセット時刻+{buffer_seconds}秒)")
+                    return wait_seconds
+                    
+                except (ValueError, TypeError):
+                    pass
+        
+        # ヘッダーが取得できない場合はデフォルトの15分
+        print("  リセット時刻取得失敗: デフォルト15分待機")
+        return 900
