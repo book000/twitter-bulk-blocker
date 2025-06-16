@@ -42,13 +42,54 @@ class TwitterAPI:
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         
-        # ディレクトリ構造の作成
+        # 新しいキャッシュ構造
+        # lookups: screen_name -> user_id変換（全ユーザー共有）
+        self.lookups_cache_dir = self.cache_dir / "lookups"
+        self.lookups_cache_dir.mkdir(parents=True, exist_ok=True)
+        
+        # relationships: ユーザー関係情報（ログインユーザー別）
+        self.relationships_cache_dir = self.cache_dir / "relationships"
+        self.relationships_cache_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 従来キャッシュ（互換性のため）
         self.screen_name_cache_dir = self.cache_dir / "screen_name"
         self.user_id_cache_dir = self.cache_dir / "user_id"
         self.screen_name_cache_dir.mkdir(parents=True, exist_ok=True)
         self.user_id_cache_dir.mkdir(parents=True, exist_ok=True)
         
         self.cache_ttl = 2592000  # 30日間（秒）
+        self._login_user_id = None
+
+    def _get_login_user_id(self) -> str:
+        """ログインユーザーのIDを取得（キャッシュ用）"""
+        if self._login_user_id is None:
+            try:
+                # Cookieからユーザー情報を取得してIDを特定
+                cookies = self.cookie_manager.load_cookies()
+                # Twitterのログインユーザー識別方法: twid cookieまたはpersonalization_id
+                
+                # Method 1: twid cookieから抽出
+                twid = cookies.get('twid')
+                if twid and twid.startswith('u%3D'):
+                    # URLデコード: u%3D -> u=
+                    import urllib.parse
+                    decoded = urllib.parse.unquote(twid)
+                    if decoded.startswith('u='):
+                        user_id = decoded[2:].split('%')[0]  # u=123456789%...
+                        self._login_user_id = user_id
+                        return self._login_user_id
+                
+                # Method 2: personalization_idまたはguest_idを使用
+                pid = cookies.get('personalization_id', cookies.get('guest_id', 'unknown'))
+                # ハッシュ化してユニークなIDとして使用
+                import hashlib
+                self._login_user_id = hashlib.md5(pid.encode()).hexdigest()[:12]
+                
+            except Exception:
+                # フォールバック: 固定ID
+                self._login_user_id = "default_user"
+        
+        return self._login_user_id
 
     def get_user_info(self, screen_name: str) -> Optional[Dict[str, Any]]:
         """スクリーンネームからユーザー情報を取得"""
@@ -186,17 +227,68 @@ class TwitterAPI:
             print(f"ユーザー情報取得エラー (ID: {user_id}): {e}")
             return None
 
+    def get_users_info_by_screen_names_batch(self, screen_names: List[str], batch_size: int = 50) -> Dict[str, Dict[str, Any]]:
+        """複数のscreen_nameから一括でユーザー情報を取得（2段階キャッシュ方式）"""
+        results = {}
+        
+        # Step 1: screen_name -> user_id変換（共有キャッシュ）
+        user_id_mappings = {}
+        uncached_names = []
+        
+        for screen_name in screen_names:
+            lookup_data = self._get_lookup_from_cache(screen_name)
+            if lookup_data and lookup_data.get('user_id'):
+                user_id_mappings[screen_name] = lookup_data['user_id']
+                print(f"[LOOKUP CACHE HIT] {screen_name} -> {lookup_data['user_id']}")
+            else:
+                uncached_names.append(screen_name)
+        
+        # Step 2: 未キャッシュのscreen_nameのlookupを取得
+        if uncached_names:
+            print(f"[LOOKUP] {len(uncached_names)}件のscreen_name -> user_id変換を実行")
+            for i in range(0, len(uncached_names), batch_size):
+                batch_names = uncached_names[i:i + batch_size]
+                batch_lookups = self._fetch_screen_name_lookups(batch_names)
+                
+                for screen_name, user_id in batch_lookups.items():
+                    if user_id:
+                        user_id_mappings[screen_name] = user_id
+                        # lookupキャッシュに保存
+                        self._save_lookup_to_cache(screen_name, user_id)
+        
+        # Step 3: user_idから関係情報を一括取得
+        user_ids = list(user_id_mappings.values())
+        if user_ids:
+            relationships_data = self.get_users_info_batch(user_ids, batch_size)
+            
+            # screen_nameをキーとして結果を再構築
+            for screen_name, user_id in user_id_mappings.items():
+                relationship_info = relationships_data.get(user_id)
+                if relationship_info:
+                    # screen_nameを関係情報に追加
+                    relationship_info['screen_name'] = screen_name
+                    results[screen_name] = relationship_info
+                else:
+                    results[screen_name] = None
+        
+        # Step 4: 変換に失敗したscreen_nameをNoneとして記録
+        for screen_name in screen_names:
+            if screen_name not in results:
+                results[screen_name] = None
+        
+        return results
+
     def get_users_info_batch(self, user_ids: List[str], batch_size: int = 50) -> Dict[str, Dict[str, Any]]:
         """複数ユーザーIDから一括でユーザー情報を取得"""
         results = {}
         
-        # キャッシュから取得済みのものをチェック
+        # 関係情報キャッシュから取得済みのものをチェック（ログインユーザー別）
         uncached_ids = []
         for user_id in user_ids:
-            cached_result = self._get_from_cache("user_id", user_id)
+            cached_result = self._get_relationship_from_cache(user_id)
             if cached_result is not None:
                 results[user_id] = cached_result
-                print(f"[CACHE HIT] ID:{user_id}: キャッシュからユーザー情報を取得")
+                print(f"[RELATIONSHIP CACHE HIT] ID:{user_id}: キャッシュからユーザー関係情報を取得")
             else:
                 uncached_ids.append(user_id)
         
@@ -211,11 +303,11 @@ class TwitterAPI:
             batch_ids = uncached_ids[i:i + batch_size]
             batch_results = self._fetch_users_batch(batch_ids)
             
-            # 結果をマージし、キャッシュに保存
+            # 結果をマージし、関係情報キャッシュに保存
             for user_id, user_data in batch_results.items():
                 results[user_id] = user_data
                 if user_data:  # Noneでない場合のみキャッシュ
-                    self._save_to_cache("user_id", user_id, user_data)
+                    self._save_relationship_to_cache(user_id, user_data)
         
         return results
 
@@ -345,6 +437,160 @@ class TwitterAPI:
             }
 
         return None
+
+    def _fetch_screen_names_batch(self, screen_names: List[str]) -> Dict[str, Optional[Dict[str, Any]]]:
+        """複数のscreen_nameを並行して取得（個別APIの並行実行）"""
+        results = {}
+        
+        # 並行処理の代わりに、レート制限を考慮した順次処理を実装
+        for screen_name in screen_names:
+            try:
+                user_info = self._fetch_single_screen_name(screen_name)
+                results[screen_name] = user_info
+                
+                # 短い間隔で待機（レート制限対策）
+                if len(screen_names) > 1:
+                    time.sleep(0.1)
+                    
+            except Exception as e:
+                print(f"  ✗ {screen_name}: 取得エラー - {e}")
+                results[screen_name] = None
+        
+        return results
+
+    def _fetch_screen_name_lookups(self, screen_names: List[str]) -> Dict[str, Optional[str]]:
+        """複数のscreen_nameからuser_idを取得（lookup専用）"""
+        results = {}
+        
+        for screen_name in screen_names:
+            try:
+                user_info = self._fetch_single_screen_name_lookup(screen_name)
+                results[screen_name] = user_info.get('id') if user_info else None
+                
+                # 短い間隔で待機（レート制限対策）
+                if len(screen_names) > 1:
+                    time.sleep(0.1)
+                    
+            except Exception as e:
+                print(f"  ✗ {screen_name}: lookup失敗 - {e}")
+                results[screen_name] = None
+        
+        return results
+
+    def _fetch_single_screen_name_lookup(self, screen_name: str) -> Optional[Dict[str, Any]]:
+        """単一のscreen_nameからuser_idを取得（lookup専用・関係情報なし）"""
+        try:
+            cookies = self.cookie_manager.load_cookies()
+            headers = self._build_graphql_headers(cookies)
+
+            params = {
+                "variables": json.dumps({
+                    "screen_name": screen_name,
+                    "withSafetyModeUserFields": False,  # 関係情報不要
+                    "withSuperFollowsUserFields": False,  # 関係情報不要
+                }),
+                "features": json.dumps(self._get_graphql_features()),
+            }
+
+            response = requests.get(
+                self.USER_BY_SCREEN_NAME_ENDPOINT, headers=headers, params=params
+            )
+
+            # 基本的なエラーハンドリングのみ
+            if response.status_code == 429:
+                wait_seconds = self._calculate_wait_time(response)
+                print(f"  レートリミット検出 ({screen_name}): {wait_seconds/60:.1f}分間待機")
+                time.sleep(wait_seconds)
+                response = requests.get(
+                    self.USER_BY_SCREEN_NAME_ENDPOINT, headers=headers, params=params
+                )
+
+            if response.status_code == 401:
+                raise SystemExit("Authentication failed - Cookie is invalid")
+
+            if self._is_account_locked(response):
+                raise SystemExit("Account locked - terminating process")
+
+            if response.status_code == 200:
+                # 基本情報のみ解析（関係情報なし）
+                return self._parse_lookup_response(response.json(), screen_name)
+
+            return None
+
+        except Exception as e:
+            print(f"  ✗ {screen_name}: lookup取得エラー - {e}")
+            return None
+
+    def _parse_lookup_response(self, data: Dict[str, Any], screen_name: str) -> Optional[Dict[str, Any]]:
+        """lookup専用レスポンス解析（IDと基本情報のみ）"""
+        if (
+            "data" in data
+            and "user" in data["data"]
+            and "result" in data["data"]["user"]
+        ):
+            result = data["data"]["user"]["result"]
+            
+            if "legacy" in result:
+                legacy = result["legacy"]
+                return {
+                    "id": legacy.get("id_str") or result.get("rest_id"),
+                    "screen_name": legacy.get("screen_name") or screen_name,
+                    "name": legacy.get("name"),
+                }
+        return None
+
+    def _fetch_single_screen_name(self, screen_name: str) -> Optional[Dict[str, Any]]:
+        """単一のscreen_nameを取得（get_user_infoの軽量版）"""
+        try:
+            cookies = self.cookie_manager.load_cookies()
+            headers = self._build_graphql_headers(cookies)
+
+            params = {
+                "variables": json.dumps({
+                    "screen_name": screen_name,
+                    "withSafetyModeUserFields": True,
+                    "withSuperFollowsUserFields": True,
+                }),
+                "features": json.dumps(self._get_graphql_features()),
+            }
+
+            response = requests.get(
+                self.USER_BY_SCREEN_NAME_ENDPOINT, headers=headers, params=params
+            )
+
+            # レートリミット検出（基本チェックのみ）
+            if response.status_code == 429:
+                wait_seconds = self._calculate_wait_time(response)
+                wait_minutes = wait_seconds / 60
+                print(f"  レートリミット検出 ({screen_name}): {wait_minutes:.1f}分間待機します")
+                time.sleep(wait_seconds)
+                
+                # 1回だけリトライ
+                response = requests.get(
+                    self.USER_BY_SCREEN_NAME_ENDPOINT, headers=headers, params=params
+                )
+
+            # 認証エラー検出
+            if response.status_code == 401:
+                print(f"  認証エラー検出 ({screen_name}): Cookieが無効です。処理を終了します")
+                raise SystemExit("Authentication failed - Cookie is invalid")
+
+            # アカウントロック検出
+            if self._is_account_locked(response):
+                print(f"  アカウントロック検出 ({screen_name}): 処理を終了します")
+                raise SystemExit("Account locked - terminating process")
+
+            if response.status_code == 200:
+                return self._parse_user_response(response.json(), screen_name)
+
+            # エラーの場合
+            error_msg = self._get_detailed_error_message(response, screen_name)
+            print(f"  ✗ {screen_name}: {error_msg}")
+            return None
+
+        except Exception as e:
+            print(f"  ✗ {screen_name}: 取得エラー - {e}")
+            return None
 
     def block_user(self, user_id: str, screen_name: str) -> Dict[str, Any]:
         """REST APIでユーザーをブロック"""
@@ -738,3 +984,90 @@ class TwitterAPI:
             },
             "cache_ttl_days": self.cache_ttl / 86400
         }
+
+    def _get_lookup_from_cache(self, screen_name: str) -> Optional[Dict[str, Any]]:
+        """lookupキャッシュから取得（screen_name -> user_id変換用）"""
+        safe_screen_name = "".join(c for c in screen_name if c.isalnum() or c in "._-")
+        cache_file = self.lookups_cache_dir / f"{safe_screen_name}.json"
+        
+        try:
+            if cache_file.exists():
+                file_mtime = cache_file.stat().st_mtime
+                current_time = time.time()
+                
+                if current_time - file_mtime < self.cache_ttl:
+                    with open(cache_file, 'r', encoding='utf-8') as f:
+                        return json.load(f)
+                else:
+                    cache_file.unlink()
+        except Exception:
+            if cache_file.exists():
+                try:
+                    cache_file.unlink()
+                except:
+                    pass
+        
+        return None
+
+    def _save_lookup_to_cache(self, screen_name: str, user_id: str) -> None:
+        """lookupキャッシュに保存（screen_name -> user_id変換用）"""
+        safe_screen_name = "".join(c for c in screen_name if c.isalnum() or c in "._-")
+        cache_file = self.lookups_cache_dir / f"{safe_screen_name}.json"
+        
+        try:
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
+            
+            lookup_data = {
+                "screen_name": screen_name,
+                "user_id": user_id,
+                "cached_at": time.time()
+            }
+            
+            with open(cache_file, 'w', encoding='utf-8') as f:
+                json.dump(lookup_data, f, ensure_ascii=False, indent=2)
+            print(f"[LOOKUP CACHE SAVE] {screen_name} -> {user_id}")
+        except Exception as e:
+            print(f"lookupキャッシュ保存エラー ({screen_name}): {e}")
+
+    def _get_relationship_from_cache(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """関係情報キャッシュから取得（ログインユーザー別）"""
+        login_user_id = self._get_login_user_id()
+        user_cache_dir = self.relationships_cache_dir / login_user_id
+        
+        safe_user_id = "".join(c for c in user_id if c.isalnum() or c in "._-")
+        cache_file = user_cache_dir / f"{safe_user_id}.json"
+        
+        try:
+            if cache_file.exists():
+                file_mtime = cache_file.stat().st_mtime
+                current_time = time.time()
+                
+                if current_time - file_mtime < self.cache_ttl:
+                    with open(cache_file, 'r', encoding='utf-8') as f:
+                        return json.load(f)
+                else:
+                    cache_file.unlink()
+        except Exception:
+            if cache_file.exists():
+                try:
+                    cache_file.unlink()
+                except:
+                    pass
+        
+        return None
+
+    def _save_relationship_to_cache(self, user_id: str, user_data: Dict[str, Any]) -> None:
+        """関係情報キャッシュに保存（ログインユーザー別）"""
+        login_user_id = self._get_login_user_id()
+        user_cache_dir = self.relationships_cache_dir / login_user_id
+        user_cache_dir.mkdir(parents=True, exist_ok=True)
+        
+        safe_user_id = "".join(c for c in user_id if c.isalnum() or c in "._-")
+        cache_file = user_cache_dir / f"{safe_user_id}.json"
+        
+        try:
+            with open(cache_file, 'w', encoding='utf-8') as f:
+                json.dump(user_data, f, ensure_ascii=False, indent=2)
+            print(f"[RELATIONSHIP CACHE SAVE] {login_user_id}/ID:{user_id}: ユーザー関係情報をキャッシュに保存")
+        except Exception as e:
+            print(f"関係情報キャッシュ保存エラー ({user_id}): {e}")

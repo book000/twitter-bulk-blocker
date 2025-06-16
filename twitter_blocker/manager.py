@@ -99,31 +99,12 @@ class BulkBlockManager:
         print(f"バッチサイズ: {batch_size}")
         print("-" * 50)
 
-        # user_id形式の場合は一括処理、screen_name形式は従来通り個別処理
+        # 両方の形式でバッチ処理を使用
         if user_format == "user_id":
             self._process_users_batch(remaining_users, user_format, stats, delay, batch_size, session_id)
         else:
-            # screen_name形式は従来通り個別処理
-            for i, user_identifier in enumerate(remaining_users, 1):
-                self._process_single_user(
-                    user_identifier, user_format, i, len(remaining_users), stats, delay
-                )
-
-                # セッション更新
-                self.database.update_session(
-                    session_id,
-                    stats["processed"],
-                    stats["blocked"],
-                    stats["skipped"],
-                    stats["errors"],
-                )
-
-                # 進捗表示
-                if i % 10 == 0:
-                    print(
-                        f"\n  進捗: {i}/{len(remaining_users)} 完了 "
-                        f"(ブロック: {stats['blocked']}, スキップ: {stats['skipped']}, エラー: {stats['errors']})"
-                    )
+            # screen_name形式でもバッチ処理を使用
+            self._process_screen_names_batch(remaining_users, user_format, stats, delay, batch_size, session_id)
 
         # セッション完了
         self.database.complete_session(session_id)
@@ -254,6 +235,102 @@ class BulkBlockManager:
                     stats["errors"] += 1
                     self.database.record_block_result(
                         None, user_id, None, False, 0, f"バッチ処理エラー: {str(e)}"
+                    )
+
+    def _process_screen_names_batch(
+        self,
+        screen_names: List[str],
+        user_format: str,
+        stats: Dict[str, int],
+        delay: float,
+        batch_size: int,
+        session_id: int,
+    ) -> None:
+        """screen_nameリストの一括処理"""
+        total_count = len(screen_names)
+        processed_count = 0
+        
+        for i in range(0, len(screen_names), batch_size):
+            batch_names = screen_names[i:i + batch_size]
+            batch_start = i + 1
+            batch_end = min(i + batch_size, total_count)
+            
+            print(f"\n[BATCH {batch_start}-{batch_end}/{total_count}] {len(batch_names)}ユーザーを一括取得中...")
+            
+            # 重複チェック（一括）
+            unchecked_names = []
+            for screen_name in batch_names:
+                if self.is_already_blocked(screen_name, user_format):
+                    print(f"  ℹ スキップ: @{screen_name} 既にブロック済み")
+                    stats["skipped"] += 1
+                    processed_count += 1
+                else:
+                    unchecked_names.append(screen_name)
+            
+            if not unchecked_names:
+                print(f"  → 全{len(batch_names)}ユーザーがブロック済み")
+                continue
+            
+            try:
+                # 一括ユーザー情報取得
+                users_info = self.api.get_users_info_by_screen_names_batch(unchecked_names, batch_size)
+                
+                # 各ユーザーを個別に処理
+                for screen_name in unchecked_names:
+                    processed_count += 1
+                    user_info = users_info.get(screen_name)
+                    
+                    if not user_info:
+                        print(f"  ✗ エラー: @{screen_name} ユーザー情報取得失敗（詳細は上記ログを参照）")
+                        stats["errors"] += 1
+                        self.database.record_block_result(
+                            screen_name, None, None, False, 404, "ユーザー情報取得失敗"
+                        )
+                        continue
+                    
+                    # ユーザー状態チェック
+                    if self._check_user_unavailable(user_info, screen_name, stats):
+                        continue
+                    
+                    # フォロー関係チェック
+                    if self._check_follow_relationship(user_info, screen_name, stats):
+                        continue
+                    
+                    # 既にブロック済みかチェック
+                    if self._check_already_blocking(user_info, screen_name, stats):
+                        continue
+                    
+                    # ブロック実行
+                    self._execute_block(user_info, screen_name, stats)
+                    stats["processed"] += 1
+                
+                # セッション更新
+                self.database.update_session(
+                    session_id,
+                    stats["processed"],
+                    stats["blocked"],
+                    stats["skipped"],
+                    stats["errors"],
+                )
+                
+                # 進捗表示
+                print(
+                    f"  → バッチ完了: {batch_end}/{total_count} "
+                    f"(ブロック: {stats['blocked']}, スキップ: {stats['skipped']}, エラー: {stats['errors']})"
+                )
+                
+                # バッチ間の待機
+                if i + batch_size < len(screen_names):
+                    time.sleep(delay)
+                    
+            except Exception as e:
+                print(f"  ✗ バッチ処理エラー: {e}")
+                # バッチエラー時は個別処理にフォールバック
+                for screen_name in unchecked_names:
+                    processed_count += 1
+                    stats["errors"] += 1
+                    self.database.record_block_result(
+                        screen_name, None, None, False, 0, f"バッチ処理エラー: {str(e)}"
                     )
 
     def _process_single_user(
