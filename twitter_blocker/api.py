@@ -738,6 +738,7 @@ class TwitterAPI:
     def _get_graphql_features(self) -> Dict[str, bool]:
         """GraphQL API用のフィーチャーフラグを取得"""
         return {
+            "hidden_profile_likes_enabled": True,
             "hidden_profile_subscriptions_enabled": True,
             "rweb_tipjar_consumption_enabled": True,
             "responsive_web_graphql_exclude_directive_enabled": True,
