@@ -1,0 +1,43 @@
+FROM python:3.13.5-slim
+
+WORKDIR /app
+
+RUN groupadd --gid 1000 appuser && \
+    useradd --uid 1000 --gid appuser --shell /bin/bash --create-home appuser
+
+# hadolint ignore=DL3008
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        tzdata && \
+    ln -snf /usr/share/zoneinfo/Asia/Tokyo /etc/localtime && \
+    echo "Asia/Tokyo" > /etc/timezone && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+ENV TZ=Asia/Tokyo \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    TWITTER_COOKIES_PATH=/data/cookies.json \
+    TWITTER_USERS_FILE=/data/users.json \
+    TWITTER_BLOCK_DB=/data/block_history.db
+
+COPY requirements.txt ./
+
+RUN python -m pip install --no-cache-dir --upgrade pip==25.1.1 && \
+    pip install --no-cache-dir -r requirements.txt
+
+RUN mkdir -p /app/data && \
+    chown -R appuser:appuser /app
+
+COPY --chown=appuser:appuser twitter_blocker/ ./twitter_blocker/
+COPY --chown=appuser:appuser README.md examples.md ./
+
+USER appuser
+
+VOLUME ["/app/data"]
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD python3 -c "import sys; sys.exit(0)"
+
+ENTRYPOINT ["python3", "-m", "twitter_blocker"]
+CMD ["--help"]
