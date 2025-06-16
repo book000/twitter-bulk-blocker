@@ -99,11 +99,11 @@ class BulkBlockManager:
         print(f"バッチサイズ: {batch_size}")
         print("-" * 50)
 
-        # 両方の形式でバッチ処理を使用
+        # user_id形式とscreen_name形式で処理を分ける
         if user_format == "user_id":
             self._process_users_batch(remaining_users, user_format, stats, delay, batch_size, session_id)
         else:
-            # screen_name形式でもバッチ処理を使用
+            # screen_name形式も新しいバッチ処理を使用
             self._process_screen_names_batch(remaining_users, user_format, stats, delay, batch_size, session_id)
 
         # セッション完了
@@ -272,8 +272,8 @@ class BulkBlockManager:
                 continue
             
             try:
-                # 一括ユーザー情報取得
-                users_info = self.api.get_users_info_by_screen_names_batch(unchecked_names, batch_size)
+                # 新しいAPIメソッドで一括ユーザー情報取得
+                users_info = self.api.get_users_info_by_screen_names(unchecked_names, batch_size)
                 
                 # 各ユーザーを個別に処理
                 for screen_name in unchecked_names:
@@ -302,12 +302,15 @@ class BulkBlockManager:
                     
                     # ブロック実行
                     self._execute_block(user_info, screen_name, stats)
-                    stats["processed"] += 1
+                    
+                    # 処理間の待機
+                    if processed_count < total_count:
+                        time.sleep(delay)
                 
                 # セッション更新
                 self.database.update_session(
                     session_id,
-                    stats["processed"],
+                    processed_count,
                     stats["blocked"],
                     stats["skipped"],
                     stats["errors"],
@@ -315,14 +318,10 @@ class BulkBlockManager:
                 
                 # 進捗表示
                 print(
-                    f"  → バッチ完了: {batch_end}/{total_count} "
+                    f"  進捗: {processed_count}/{total_count} 完了 "
                     f"(ブロック: {stats['blocked']}, スキップ: {stats['skipped']}, エラー: {stats['errors']})"
                 )
                 
-                # バッチ間の待機
-                if i + batch_size < len(screen_names):
-                    time.sleep(delay)
-                    
             except Exception as e:
                 print(f"  ✗ バッチ処理エラー: {e}")
                 # バッチエラー時は個別処理にフォールバック
