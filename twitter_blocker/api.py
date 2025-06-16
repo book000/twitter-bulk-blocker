@@ -50,6 +50,8 @@ class TwitterAPI:
         
         self.cache_ttl = 2592000  # 30日間（秒）
         self._login_user_id = None  # ログインユーザーIDのキャッシュ
+        self._auth_retry_count = 0  # 認証エラー時の再試行カウント
+        self._max_auth_retries = 1  # 最大認証再試行回数
 
     def _get_login_user_id(self) -> str:
         """ログインユーザーのIDを取得（キャッシュ用）"""
@@ -130,8 +132,8 @@ class TwitterAPI:
 
             # 認証エラー検出
             if response.status_code == 401:
-                print(f"認証エラー検出 ({screen_name}): Cookieが無効です。処理を終了します")
-                raise SystemExit("Authentication failed - Cookie is invalid")
+                return self._handle_auth_error(screen_name, "get_user_info", 
+                                               lambda: self.get_user_info(screen_name))
 
             # アカウントロック検出
             if self._is_account_locked(response):
@@ -203,8 +205,8 @@ class TwitterAPI:
 
             # 認証エラー検出
             if response.status_code == 401:
-                print(f"認証エラー検出 (ID: {user_id}): Cookieが無効です。処理を終了します")
-                raise SystemExit("Authentication failed - Cookie is invalid")
+                return self._handle_auth_error(user_id, "get_user_info_by_id", 
+                                               lambda: self.get_user_info_by_id(user_id))
 
             # アカウントロック検出
             if self._is_account_locked(response):
@@ -363,8 +365,8 @@ class TwitterAPI:
 
             # 認証エラー検出
             if response.status_code == 401:
-                print(f"認証エラー検出 (batch): Cookieが無効です。処理を終了します")
-                raise SystemExit("Authentication failed - Cookie is invalid")
+                return self._handle_auth_error(f"batch({len(user_ids)}users)", "get_users_batch", 
+                                               lambda: self._fetch_users_batch(user_ids))
 
             # アカウントロック検出
             if self._is_account_locked(response):
@@ -508,7 +510,8 @@ class TwitterAPI:
                 )
 
             if response.status_code == 401:
-                raise SystemExit("Authentication failed - Cookie is invalid")
+                return self._handle_auth_error(screen_name, "_fetch_single_screen_name_lookup", 
+                                               lambda: self._fetch_single_screen_name_lookup(screen_name))
 
             if self._is_account_locked(response):
                 raise SystemExit("Account locked - terminating process")
@@ -574,8 +577,8 @@ class TwitterAPI:
 
             # 認証エラー検出
             if response.status_code == 401:
-                print(f"  認証エラー検出 ({screen_name}): Cookieが無効です。処理を終了します")
-                raise SystemExit("Authentication failed - Cookie is invalid")
+                return self._handle_auth_error(screen_name, "_fetch_single_screen_name", 
+                                               lambda: self._fetch_single_screen_name(screen_name))
 
             # アカウントロック検出
             if self._is_account_locked(response):
@@ -619,8 +622,8 @@ class TwitterAPI:
 
             # 認証エラー検出
             if response.status_code == 401:
-                print(f"認証エラー検出 (block): Cookieが無効です。処理を終了します")
-                raise SystemExit("Authentication failed - Cookie is invalid")
+                return self._handle_auth_error(f"block {screen_name}", "block_user", 
+                                               lambda: self.block_user(user_id, screen_name))
 
             # アカウントロック検出
             if self._is_account_locked(response):
@@ -1245,3 +1248,36 @@ class TwitterAPI:
             print(f"[RELATIONSHIP CACHE SAVE] {login_user_id}/ID:{user_id}: ユーザー関係情報をキャッシュに保存")
         except Exception as e:
             print(f"関係情報キャッシュ保存エラー ({user_id}): {e}")
+
+    def _handle_auth_error(self, identifier: str, method_name: str, retry_func):
+        """認証エラーをハンドリングし、クッキーを再読み込みして再試行"""
+        if self._auth_retry_count < self._max_auth_retries:
+            self._auth_retry_count += 1
+            print(f"認証エラー検出 ({identifier}): Cookieを再読み込みして再試行します... (試行 {self._auth_retry_count}/{self._max_auth_retries})")
+            
+            # ログインユーザーIDのキャッシュをクリア
+            self._login_user_id = None
+            
+            # クッキーを再読み込み
+            try:
+                # クッキーキャッシュをクリア
+                self.cookie_manager.clear_cache()
+                # 少し待機してから再試行
+                time.sleep(2)
+                
+                # 再試行
+                result = retry_func()
+                
+                # 成功したらカウンターをリセット
+                self._auth_retry_count = 0
+                return result
+                
+            except SystemExit:
+                # 再試行でも失敗した場合は元のエラーを再発生
+                raise
+            except Exception as e:
+                print(f"クッキー再読み込みエラー ({identifier}): {e}")
+                
+        # 再試行回数を超えた場合、または再試行でも失敗した場合
+        print(f"認証エラー検出 ({identifier}): Cookieが無効です。処理を終了します")
+        raise SystemExit("Authentication failed - Cookie is invalid")
