@@ -84,9 +84,14 @@ class CookieManager:
 
     def __init__(self, cookies_file: str):
         self.cookies_file = cookies_file
+        self._cookies_cache = None
 
     def load_cookies(self) -> Dict[str, str]:
         """クッキーファイルを読み込み、Twitterドメインのクッキーのみ抽出"""
+        # キャッシュがあればそれを返す
+        if self._cookies_cache is not None:
+            return self._cookies_cache
+        
         with open(self.cookies_file, "r", encoding="utf-8") as f:
             cookies_list = json.load(f)
 
@@ -96,4 +101,9 @@ class CookieManager:
             if domain in self.TWITTER_DOMAINS:
                 cookies_dict[cookie["name"]] = cookie["value"]
 
+        self._cookies_cache = cookies_dict
         return cookies_dict
+    
+    def clear_cache(self):
+        """クッキーキャッシュをクリアして次回読み込み時にファイルから再読み込みさせる"""
+        self._cookies_cache = None
