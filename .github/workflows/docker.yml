@@ -34,7 +34,7 @@ jobs:
     with:
       targets: >-
         [
-          { imageName: "tomacheese/twitter-bulk-blocker", context: ".", file: "Dockerfile", packageName: "twitter-bulk-blocker" }
+          { imageName: "book000/twitter-bulk-blocker", context: ".", file: "Dockerfile", packageName: "twitter-bulk-blocker" }
         ]
     secrets:
       DOCKER_USERNAME: ${{ github.actor }}
