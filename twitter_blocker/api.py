@@ -34,10 +34,11 @@ class TwitterAPI:
     # REST APIエンドポイント
     BLOCKS_CREATE_ENDPOINT = "https://x.com/i/api/1.1/blocks/create.json"
 
-    def __init__(self, cookie_manager: CookieManager, cache_dir: str = "/data/cache"):
+    def __init__(self, cookie_manager: CookieManager, cache_dir: str = "/data/cache", debug_mode: bool = False):
         self.cookie_manager = cookie_manager
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.debug_mode = debug_mode
         
         # キャッシュ構造
         self.lookups_cache_dir = self.cache_dir / "lookups"  # screen_name -> user_id マッピング用（共有）
@@ -836,6 +837,16 @@ class TwitterAPI:
                         tokyo_tz = pytz.timezone('Asia/Tokyo')
                         reset_time = datetime.fromtimestamp(int(rate_reset), tz=tokyo_tz)
                         print(f"  Reset Time: {reset_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+                
+                # デバッグモードの場合は追加情報を表示
+                if self.debug_mode:
+                    print(f"  Content-Type: {response.headers.get('content-type', 'N/A')}")
+                    print(f"  Content-Length: {response.headers.get('content-length', 'N/A')}")
+                    # 403エラーの場合は全ヘッダーを表示
+                    if response.status_code == 403:
+                        print("  === 全ヘッダー情報 ===")
+                        for key, value in response.headers.items():
+                            print(f"  {key}: {value}")
         except Exception as e:
             print(f"  ログ出力エラー: {e}")
 
@@ -846,9 +857,19 @@ class TwitterAPI:
                 if 'errors' in error_data:
                     for error in error_data['errors']:
                         print(f"  エラー詳細: {error.get('message', 'Unknown error')}")
+                        if 'code' in error:
+                            print(f"  エラーコード: {error['code']}")
+                else:
+                    # JSON形式だがerrorsフィールドがない場合
+                    print(f"  レスポンスJSON: {json.dumps(error_data, ensure_ascii=False, indent=2)[:500]}")
             except:
                 if hasattr(response, 'text'):
-                    print(f"  レスポンステキスト: {response.text[:200]}")
+                    # 403エラーの場合は全文表示
+                    if response.status_code == 403:
+                        print(f"  レスポンステキスト全文:")
+                        print(f"  {response.text}")
+                    else:
+                        print(f"  レスポンステキスト: {response.text[:200]}")
                 else:
                     print(f"  レスポンス詳細取得不可")
 
@@ -857,7 +878,7 @@ class TwitterAPI:
         status_messages = {
             400: "不正なリクエスト",
             401: "認証エラー（Cookieが無効）",
-            403: "アクセス拒否（アカウント制限の可能性）",
+            403: "アクセス拒否",
             404: "ユーザーが見つからない",
             429: "レートリミット",
             500: "サーバーエラー",
@@ -868,19 +889,30 @@ class TwitterAPI:
         status_code = getattr(response, 'status_code', 0)
         base_msg = status_messages.get(status_code, f"HTTPエラー {status_code}")
         
-        # 403エラーの場合、アカウントロックの可能性を追記
-        if status_code == 403:
-            base_msg += " - アカウントがロックされている可能性があります"
-        
         # JSONレスポンスからエラー詳細を取得
         try:
             if hasattr(response, 'json'):
                 error_data = response.json()
                 if 'errors' in error_data and error_data['errors']:
-                    error_details = ', '.join([error.get('message', '') for error in error_data['errors']])
-                    return f"{base_msg} - {error_details}"
+                    error_details = []
+                    for error in error_data['errors']:
+                        msg = error.get('message', '')
+                        code = error.get('code', '')
+                        if code:
+                            error_details.append(f"{msg} (code: {code})")
+                        else:
+                            error_details.append(msg)
+                    return f"{base_msg} - {', '.join(error_details)}"
         except:
             pass
+        
+        # 403エラーの場合、追加情報を提供
+        if status_code == 403:
+            # アカウントロックの確認
+            if self._is_account_locked(response):
+                return f"{base_msg} - アカウントがロックされている可能性があります"
+            else:
+                return f"{base_msg} - 詳細はレスポンステキストを確認してください"
             
         return base_msg
 

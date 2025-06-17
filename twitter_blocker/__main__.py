@@ -33,6 +33,8 @@ def main():
     )
     parser.add_argument("--stats", action="store_true", help="現在の処理統計を表示")
     parser.add_argument("--debug-errors", action="store_true", help="失敗したエラーメッセージのサンプルを表示（デバッグ用）")
+    parser.add_argument("--debug", action="store_true", help="デバッグモードで実行（詳細なAPI応答を表示）")
+    parser.add_argument("--test-user", type=str, help="特定のユーザーのみテスト（デバッグ用）")
     parser.add_argument("--max-users", type=int, help="処理するユーザーの最大数")
     parser.add_argument(
         "--delay", type=float, default=1.0, help="リクエスト間隔（秒、デフォルト: 1.0）"
@@ -86,7 +88,7 @@ def main():
     print()
 
     manager = BulkBlockManager(
-        cookies_file=args.cookies, users_file=args.users_file, db_file=args.db
+        cookies_file=args.cookies, users_file=args.users_file, db_file=args.db, debug_mode=args.debug
     )
 
     # 統計表示
@@ -100,6 +102,20 @@ def main():
         print("=== エラーメッセージサンプル ===")
         for i, sample in enumerate(error_samples, 1):
             print(f"{i:2d}. {sample}")
+        return
+
+    # 特定ユーザーのテスト
+    if args.test_user:
+        print(f"=== テストユーザー: {args.test_user} ===")
+        user_info = manager.api.get_user_info(args.test_user)
+        if user_info:
+            print(f"ユーザー情報取得成功:")
+            print(f"  ID: {user_info.get('id')}")
+            print(f"  名前: {user_info.get('name')}")
+            print(f"  フォロー関係: {user_info.get('following', False)}")
+            print(f"  フォロワー関係: {user_info.get('followed_by', False)}")
+        else:
+            print(f"ユーザー情報取得失敗")
         return
 
     # リトライ回数リセット処理
