@@ -410,9 +410,9 @@ class DatabaseManager:
             for error_type, count in cursor.fetchall():
                 breakdown["by_error_type"][error_type] = count
 
-        except sqlite3.OperationalError:
+        except sqlite3.OperationalError as e:
             # データベースにまだデータがない場合
-            pass
+            logging.warning(f"OperationalError occurred while fetching failure breakdown: {e}")
 
         conn.close()
         return breakdown
