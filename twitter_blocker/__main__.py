@@ -24,6 +24,9 @@ def main():
         "--retry", action="store_true", help="失敗したユーザーのリトライ処理を実行"
     )
     parser.add_argument(
+        "--reset-retry", action="store_true", help="失敗ユーザーのリトライ回数をリセット"
+    )
+    parser.add_argument(
         "--auto-retry",
         action="store_true",
         help="--allと組み合わせて使用：実行後に自動でリトライ処理も実行",
@@ -57,7 +60,7 @@ def main():
     args = parser.parse_args()
 
     # ファイル存在チェック
-    if not args.stats and not args.retry:
+    if not args.stats and not args.retry and not args.reset_retry:
         if not os.path.exists(args.cookies):
             print(f"❌ エラー: クッキーファイルが見つかりません: {args.cookies}")
             print("正しいパスを指定してください:")
@@ -88,6 +91,11 @@ def main():
     # 統計表示
     if args.stats:
         show_stats(manager)
+        return
+
+    # リトライ回数リセット処理
+    if args.reset_retry:
+        manager.reset_retry_counts()
         return
 
     # リトライ処理

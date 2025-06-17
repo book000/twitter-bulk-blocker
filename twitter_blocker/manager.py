@@ -64,6 +64,12 @@ class BulkBlockManager:
         """リトライ候補のユーザーを取得"""
         return self.database.get_retry_candidates()
 
+    def reset_retry_counts(self) -> int:
+        """全ての失敗ユーザーのリトライ回数をリセット"""
+        affected_rows = self.database.reset_retry_counts()
+        print(f"リトライ回数をリセットしました: {affected_rows}人")
+        return affected_rows
+
     def process_bulk_block(
         self, max_users: Optional[int] = None, delay: float = 1.0, batch_size: int = 50
     ) -> None:

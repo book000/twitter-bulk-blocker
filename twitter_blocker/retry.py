@@ -12,11 +12,11 @@ class RetryManager:
     PERMANENT_FAILURES = [
         "not_found",  # ユーザーが存在しない
         "deactivated",  # アカウント無効化
+        "suspended",  # アカウント凍結（リトライ対象から除外）
     ]
 
     # 一時的な失敗（リトライ対象）
     TEMPORARY_FAILURES = [
-        "suspended",  # アカウント凍結（解除される可能性あり）
         "unavailable",  # 一時的に利用不可
     ]
 
@@ -37,7 +37,7 @@ class RetryManager:
         "server error",
     ]
 
-    MAX_RETRIES = 3
+    MAX_RETRIES = 10
 
     def should_retry(
         self,

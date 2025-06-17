@@ -229,6 +229,7 @@ block_history.db
 
 # Test files and temporary data
 test_*.json
+test_*.py
 temp_*.json
 debug_*.json
 sample_*.json
