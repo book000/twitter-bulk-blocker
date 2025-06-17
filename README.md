@@ -81,11 +81,18 @@ python3 -m twitter_blocker --reset-retry
 - `--max-users N` - 処理するユーザーの最大数を指定
 - `--delay N` - リクエスト間隔を秒で指定（デフォルト: 1.0）
 
+### デバッグ・テスト
+
+- `--debug` - デバッグモードで実行（詳細なAPI応答を表示）
+- `--test-user SCREEN_NAME` - 特定のユーザーのみテスト（デバッグ用）
+- `--debug-errors` - 失敗したエラーメッセージのサンプルを表示（デバッグ用）
+
 ### ファイルパス指定
 
 - `--cookies PATH` - クッキーファイルのパス（デフォルト: cookies.json）
 - `--users-file PATH` - ブロック対象ユーザーファイルのパス（デフォルト: video_misuse_detecteds.json）
 - `--db PATH` - ブロック履歴データベースのパス（デフォルト: block_history.db）
+- `--cache-dir PATH` - キャッシュディレクトリのパス（デフォルト: /data/cache）
 
 ## 🔧 設定方法
 
@@ -104,6 +111,7 @@ python3 -m twitter_blocker --all \
 export TWITTER_COOKIES_PATH=/path/to/cookies.json
 export TWITTER_USERS_FILE=/path/to/users.json
 export TWITTER_BLOCK_DB=/path/to/database.db
+export CACHE_DIR=/path/to/cache
 
 python3 -m twitter_blocker --all
 ```

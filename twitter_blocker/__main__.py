@@ -69,7 +69,7 @@ def main():
     args = parser.parse_args()
 
     # ファイル存在チェック
-    if not args.stats and not args.retry and not args.reset_retry and not args.debug_errors:
+    if not args.stats and not args.retry and not args.reset_retry and not args.debug_errors and not args.test_user:
         if not os.path.exists(args.cookies):
             print(f"❌ エラー: クッキーファイルが見つかりません: {args.cookies}")
             print("正しいパスを指定してください:")
@@ -95,7 +95,7 @@ def main():
 
     manager = BulkBlockManager(
         cookies_file=args.cookies, users_file=args.users_file, db_file=args.db, 
-        cache_dir=args.cache_dir, debug_mode=args.debug
+        cache_dir=args.cache_dir, debug_mode=getattr(args, 'debug', False)
     )
 
     # 統計表示

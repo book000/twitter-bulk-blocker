@@ -19,7 +19,8 @@ ENV TZ=Asia/Tokyo \
     PYTHONUNBUFFERED=1 \
     TWITTER_COOKIES_PATH=/data/cookies.json \
     TWITTER_USERS_FILE=/data/users.json \
-    TWITTER_BLOCK_DB=/data/block_history.db
+    TWITTER_BLOCK_DB=/data/block_history.db \
+    CACHE_DIR=/data/cache
 
 COPY requirements.txt ./
 

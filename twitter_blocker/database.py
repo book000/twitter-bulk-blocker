@@ -431,6 +431,7 @@ class DatabaseManager:
             SELECT DISTINCT error_message
             FROM block_history 
             WHERE status = 'failed' AND error_message IS NOT NULL 
+            ORDER BY last_retry_at DESC
             LIMIT ?
             """,
             (limit,)
