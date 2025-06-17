@@ -59,6 +59,12 @@ def main():
         default=os.getenv("TWITTER_BLOCK_DB", "block_history.db"),
         help="ブロック履歴データベースのパス（デフォルト: block_history.db、環境変数: TWITTER_BLOCK_DB）",
     )
+    parser.add_argument(
+        "--cache-dir",
+        type=str,
+        default=os.getenv("CACHE_DIR", "/data/cache"),
+        help="キャッシュディレクトリのパス（デフォルト: /data/cache、環境変数: CACHE_DIR）",
+    )
 
     args = parser.parse_args()
 
@@ -88,7 +94,8 @@ def main():
     print()
 
     manager = BulkBlockManager(
-        cookies_file=args.cookies, users_file=args.users_file, db_file=args.db, debug_mode=args.debug
+        cookies_file=args.cookies, users_file=args.users_file, db_file=args.db, 
+        cache_dir=args.cache_dir, debug_mode=args.debug
     )
 
     # 統計表示
