@@ -238,7 +238,7 @@ class DatabaseManager:
                    error_message, user_status, retry_count, last_retry_at
             FROM block_history 
             WHERE status = 'failed' 
-            AND retry_count < 3
+            AND retry_count < 10
             AND (
                 user_status IN ('unavailable') OR
                 response_code IN (429, 500, 502, 503, 504) OR
@@ -307,7 +307,7 @@ class DatabaseManager:
             stats["failed"] = cursor.fetchone()[0]
 
             # リトライ上限に達した失敗
-            cursor.execute("SELECT COUNT(*) FROM block_history WHERE status = 'failed' AND retry_count >= 3")
+            cursor.execute("SELECT COUNT(*) FROM block_history WHERE status = 'failed' AND retry_count >= 10")
             stats["failed_max_retries"] = cursor.fetchone()[0]
 
             # まだリトライ可能な失敗（suspended除く）
@@ -315,7 +315,7 @@ class DatabaseManager:
                 """
                 SELECT COUNT(*) FROM block_history 
                 WHERE status = 'failed' 
-                AND retry_count < 3
+                AND retry_count < 10
                 AND (
                     user_status IN ('unavailable') OR
                     response_code IN (429, 500, 502, 503, 504) OR

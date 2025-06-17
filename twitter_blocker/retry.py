@@ -37,7 +37,7 @@ class RetryManager:
         "server error",
     ]
 
-    MAX_RETRIES = 3
+    MAX_RETRIES = 10
 
     def should_retry(
         self,
