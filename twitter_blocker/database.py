@@ -240,7 +240,7 @@ class DatabaseManager:
             WHERE status = 'failed' 
             AND retry_count < 3
             AND (
-                user_status IN ('suspended', 'unavailable') OR
+                user_status IN ('unavailable') OR
                 response_code IN (429, 500, 502, 503, 504) OR
                 error_message LIKE '%temporarily%' OR
                 error_message LIKE '%rate limit%' OR
@@ -294,6 +294,8 @@ class DatabaseManager:
 
         stats = {
             "failed": 0,
+            "failed_max_retries": 0,  # リトライ上限に達した失敗
+            "failed_retryable": 0,    # まだリトライ可能な失敗
             "follow_relationship": 0,
             "suspended": 0,
             "unavailable": 0,
@@ -303,6 +305,28 @@ class DatabaseManager:
             # 失敗したユーザー数
             cursor.execute("SELECT COUNT(*) FROM block_history WHERE status = 'failed'")
             stats["failed"] = cursor.fetchone()[0]
+
+            # リトライ上限に達した失敗
+            cursor.execute("SELECT COUNT(*) FROM block_history WHERE status = 'failed' AND retry_count >= 3")
+            stats["failed_max_retries"] = cursor.fetchone()[0]
+
+            # まだリトライ可能な失敗（suspended除く）
+            cursor.execute(
+                """
+                SELECT COUNT(*) FROM block_history 
+                WHERE status = 'failed' 
+                AND retry_count < 3
+                AND (
+                    user_status IN ('unavailable') OR
+                    response_code IN (429, 500, 502, 503, 504) OR
+                    error_message LIKE '%temporarily%' OR
+                    error_message LIKE '%rate limit%' OR
+                    error_message LIKE '%timeout%' OR
+                    error_message LIKE '%server error%'
+                )
+                """
+            )
+            stats["failed_retryable"] = cursor.fetchone()[0]
 
             # フォロー関係でスキップしたユーザー数
             cursor.execute(
@@ -328,6 +352,89 @@ class DatabaseManager:
 
         conn.close()
         return stats
+
+    def get_failure_breakdown(self) -> Dict[str, Any]:
+        """失敗の詳細内訳を取得"""
+        conn = sqlite3.connect(self.db_file)
+        cursor = conn.cursor()
+
+        breakdown = {
+            "by_status": {},
+            "by_response_code": {},
+            "by_error_type": {},
+        }
+
+        try:
+            # ユーザーステータス別の失敗数
+            cursor.execute(
+                """
+                SELECT user_status, COUNT(*) 
+                FROM block_history 
+                WHERE status = 'failed' AND user_status IS NOT NULL 
+                GROUP BY user_status
+                """
+            )
+            for status, count in cursor.fetchall():
+                breakdown["by_status"][status] = count
+
+            # HTTPステータスコード別の失敗数
+            cursor.execute(
+                """
+                SELECT response_code, COUNT(*) 
+                FROM block_history 
+                WHERE status = 'failed' AND response_code IS NOT NULL 
+                GROUP BY response_code
+                """
+            )
+            for code, count in cursor.fetchall():
+                breakdown["by_response_code"][code] = count
+
+            # エラータイプ別の失敗数
+            cursor.execute(
+                """
+                SELECT 
+                    CASE 
+                        WHEN error_message LIKE '%フォロー関係%' THEN 'follow_relationship'
+                        WHEN error_message LIKE '%rate limit%' THEN 'rate_limit'
+                        WHEN error_message LIKE '%timeout%' THEN 'timeout'
+                        WHEN error_message LIKE '%server error%' THEN 'server_error'
+                        WHEN error_message LIKE '%temporarily%' THEN 'temporary'
+                        ELSE 'other'
+                    END as error_type,
+                    COUNT(*)
+                FROM block_history 
+                WHERE status = 'failed' AND error_message IS NOT NULL 
+                GROUP BY error_type
+                """
+            )
+            for error_type, count in cursor.fetchall():
+                breakdown["by_error_type"][error_type] = count
+
+        except sqlite3.OperationalError:
+            # データベースにまだデータがない場合
+            pass
+
+        conn.close()
+        return breakdown
+
+    def reset_retry_counts(self) -> int:
+        """全ての失敗ユーザーのリトライ回数をリセット"""
+        conn = sqlite3.connect(self.db_file)
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            UPDATE block_history 
+            SET retry_count = 0, last_retry_at = NULL
+            WHERE status = 'failed'
+            """
+        )
+
+        affected_rows = cursor.rowcount
+        conn.commit()
+        conn.close()
+        
+        return affected_rows
 
     def _get_retry_delay(self, retry_count: int, base_delay: int = 30) -> int:
         """リトライ間隔を計算（指数バックオフ）"""

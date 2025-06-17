@@ -24,6 +24,11 @@ def show_stats(manager: BulkBlockManager) -> None:
 
     if detailed_stats["failed"] > 0:
         print(f"失敗: {detailed_stats['failed']}人")
+        if detailed_stats["failed_max_retries"] > 0:
+            print(f"  - リトライ上限到達: {detailed_stats['failed_max_retries']}人")
+        if detailed_stats["failed_retryable"] > 0:
+            print(f"  - リトライ可能: {detailed_stats['failed_retryable']}人")
+        _show_failure_breakdown(manager)
 
     if detailed_stats["follow_relationship"] > 0:
         print(f"フォロー関係でスキップ: {detailed_stats['follow_relationship']}人")
@@ -41,14 +46,51 @@ def show_stats(manager: BulkBlockManager) -> None:
 
 def _show_retry_details(retry_candidates: List[Dict[str, Any]]) -> None:
     """リトライ候補の詳細表示"""
-    suspended_retries = len(
-        [c for c in retry_candidates if c.get("user_status") == "suspended"]
-    )
-    error_retries = len(
-        [c for c in retry_candidates if c.get("user_status") != "suspended"]
-    )
+    # ステータス別の内訳を取得
+    status_counts = {}
+    code_counts = {}
+    
+    for candidate in retry_candidates:
+        user_status = candidate.get("user_status", "unknown")
+        response_code = candidate.get("response_code")
+        
+        # ユーザーステータス別カウント
+        if user_status != "unknown":
+            status_counts[user_status] = status_counts.get(user_status, 0) + 1
+        
+        # HTTPステータスコード別カウント
+        if response_code:
+            code_counts[response_code] = code_counts.get(response_code, 0) + 1
+    
+    # ステータス別表示
+    for status, count in status_counts.items():
+        print(f"  - {status}: {count}人")
+    
+    # HTTPステータスコード別表示
+    if code_counts:
+        print("  - HTTPエラー:")
+        for code, count in sorted(code_counts.items()):
+            print(f"    {code}: {count}人")
 
-    if suspended_retries > 0:
-        print(f"  - suspended: {suspended_retries}人")
-    if error_retries > 0:
-        print(f"  - その他エラー: {error_retries}人")
+
+def _show_failure_breakdown(manager: BulkBlockManager) -> None:
+    """失敗の詳細内訳を表示"""
+    breakdown = manager.database.get_failure_breakdown()
+    
+    # ユーザーステータス別の失敗
+    if breakdown["by_status"]:
+        print("  - ステータス別:")
+        for status, count in breakdown["by_status"].items():
+            print(f"    {status}: {count}人")
+    
+    # HTTPステータスコード別の失敗
+    if breakdown["by_response_code"]:
+        print("  - HTTPエラー別:")
+        for code, count in sorted(breakdown["by_response_code"].items()):
+            print(f"    {code}: {count}人")
+    
+    # エラータイプ別の失敗
+    if breakdown["by_error_type"]:
+        print("  - エラータイプ別:")
+        for error_type, count in breakdown["by_error_type"].items():
+            print(f"    {error_type}: {count}人")
