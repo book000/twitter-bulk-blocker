@@ -32,6 +32,7 @@ def main():
         help="--allと組み合わせて使用：実行後に自動でリトライ処理も実行",
     )
     parser.add_argument("--stats", action="store_true", help="現在の処理統計を表示")
+    parser.add_argument("--debug-errors", action="store_true", help="失敗したエラーメッセージのサンプルを表示（デバッグ用）")
     parser.add_argument("--max-users", type=int, help="処理するユーザーの最大数")
     parser.add_argument(
         "--delay", type=float, default=1.0, help="リクエスト間隔（秒、デフォルト: 1.0）"
@@ -60,7 +61,7 @@ def main():
     args = parser.parse_args()
 
     # ファイル存在チェック
-    if not args.stats and not args.retry and not args.reset_retry:
+    if not args.stats and not args.retry and not args.reset_retry and not args.debug_errors:
         if not os.path.exists(args.cookies):
             print(f"❌ エラー: クッキーファイルが見つかりません: {args.cookies}")
             print("正しいパスを指定してください:")
@@ -91,6 +92,14 @@ def main():
     # 統計表示
     if args.stats:
         show_stats(manager)
+        return
+
+    # エラーメッセージデバッグ表示
+    if args.debug_errors:
+        error_samples = manager.database.get_error_message_samples(20)
+        print("=== エラーメッセージサンプル ===")
+        for i, sample in enumerate(error_samples, 1):
+            print(f"{i:2d}. {sample}")
         return
 
     # リトライ回数リセット処理
