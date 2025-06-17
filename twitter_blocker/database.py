@@ -394,11 +394,15 @@ class DatabaseManager:
                 """
                 SELECT 
                     CASE 
-                        WHEN error_message LIKE '%フォロー関係%' THEN 'follow_relationship'
-                        WHEN error_message LIKE '%rate limit%' THEN 'rate_limit'
-                        WHEN error_message LIKE '%timeout%' THEN 'timeout'
-                        WHEN error_message LIKE '%server error%' THEN 'server_error'
-                        WHEN error_message LIKE '%temporarily%' THEN 'temporary'
+                        WHEN error_message LIKE '%フォロー関係%' OR error_message LIKE '%follow%' THEN 'follow_relationship'
+                        WHEN error_message LIKE '%rate limit%' OR error_message LIKE '%レート制限%' OR error_message LIKE '%429%' THEN 'rate_limit'
+                        WHEN error_message LIKE '%timeout%' OR error_message LIKE '%タイムアウト%' OR error_message LIKE '%timed out%' THEN 'timeout'
+                        WHEN error_message LIKE '%server error%' OR error_message LIKE '%サーバーエラー%' OR error_message LIKE '%500%' OR error_message LIKE '%502%' OR error_message LIKE '%503%' OR error_message LIKE '%504%' THEN 'server_error'
+                        WHEN error_message LIKE '%temporarily%' OR error_message LIKE '%一時的%' OR error_message LIKE '%temporary%' THEN 'temporary'
+                        WHEN error_message LIKE '%network%' OR error_message LIKE '%ネットワーク%' OR error_message LIKE '%connection%' THEN 'network_error'
+                        WHEN error_message LIKE '%unauthorized%' OR error_message LIKE '%認証%' OR error_message LIKE '%401%' THEN 'auth_error'
+                        WHEN error_message LIKE '%forbidden%' OR error_message LIKE '%403%' THEN 'forbidden'
+                        WHEN error_message LIKE '%not found%' OR error_message LIKE '%404%' OR error_message LIKE '%見つからない%' THEN 'not_found_error'
                         ELSE 'other'
                     END as error_type,
                     COUNT(*)
@@ -416,6 +420,25 @@ class DatabaseManager:
 
         conn.close()
         return breakdown
+
+    def get_error_message_samples(self, limit: int = 10) -> List[str]:
+        """実際のエラーメッセージのサンプルを取得（デバッグ用）"""
+        conn = sqlite3.connect(self.db_file)
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            SELECT DISTINCT error_message
+            FROM block_history 
+            WHERE status = 'failed' AND error_message IS NOT NULL 
+            LIMIT ?
+            """,
+            (limit,)
+        )
+
+        samples = [row[0] for row in cursor.fetchall()]
+        conn.close()
+        return samples
 
     def reset_retry_counts(self) -> int:
         """全ての失敗ユーザーのリトライ回数をリセット"""
