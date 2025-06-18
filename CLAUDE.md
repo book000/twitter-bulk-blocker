@@ -91,6 +91,57 @@ python3 -m py_compile twitter_blocker/*.py  # 全品質チェック
 # 本番環境（Cinnamonサーバー）
 /project:check-cinnamon                    # サーバー状態調査
 /project:restart-service [service_name]    # サービス再起動
+
+# 新・監視ツールスイート v2.0 (Claude Code最適化)
+.claude/cinnamon-monitor-suite.sh [mode]   # 統合監視インターフェース (非対話型)
+.claude/cinnamon-logs-ai-optimized.sh      # AI最適化版・構造化出力
+.claude/cinnamon-logs.sh                   # 基本版 (参考用)
+```
+
+## 📊 Cinnamonサーバー監視ツールスイート
+
+### 統合監視システム
+```bash
+# メインインターフェース（推奨）
+.claude/cinnamon-monitor-suite.sh
+# インタラクティブメニューで全ツールにアクセス
+```
+
+### 個別ツール詳細
+```bash
+# 🤖 AI最適化版（メイン）
+.claude/cinnamon-logs-ai-optimized.sh
+# Claude Code向け構造化出力・問題根本原因特定・修正提案
+
+# 🔍 基本監視（参考用）
+.claude/cinnamon-logs.sh
+# 従来版・人間向け出力
+
+# 🎛️ 統合インターフェース
+.claude/cinnamon-monitor-suite.sh [mode]
+# 引数ベース非対話型・複数分析手法への統一アクセス
+# 例: .claude/cinnamon-monitor-suite.sh ai
+```
+
+### 監視ツール使い分けガイド
+| 状況 | 推奨ツール | 実行方法 |
+|------|------------|----------|
+| **Claude Code標準** | AI最適化版 | `cinnamon-logs-ai-optimized.sh` |
+| **問題詳細調査** | AI最適化版 | `cinnamon-logs-ai-optimized.sh` |
+| **基本チェック** | 統合インターフェース | `cinnamon-monitor-suite.sh basic` |
+| **緊急対応** | 統合インターフェース | `cinnamon-monitor-suite.sh emergency` |
+| **参考・比較用** | 基本版 | `cinnamon-logs.sh` |
+
+### Claude Code分析システム
+```bash
+# AI最適化版での問題特定・修正提案
+.claude/cinnamon-logs-ai-optimized.sh
+
+# 重要度別分類
+# 🚨 CRITICAL: 即座の修正が必要（KeyError等のコード問題）
+# ⚠️ WARNING: 注意が必要（認証エラー、パフォーマンス低下）
+# ℹ️ INFO: 情報提供レベル（最適化提案）
+# ✅ OK: 正常状態の確認
 ```
 
 ### 重要な数値
