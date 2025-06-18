@@ -358,6 +358,8 @@ echo "CODE_ISSUE_ANALYSIS:"
 
 # KeyErrorの詳細分析
 keyerror_count=$(echo "$detailed_logs" | grep -c "KeyError.*error_message" 2>/dev/null || echo "0")
+keyerror_count=$(echo "$keyerror_count" | tr -d '\n\r' | grep -o '[0-9]*' | head -1)
+[ -z "$keyerror_count" ] && keyerror_count=0
 if [ "$keyerror_count" -gt 0 ]; then
     echo "  ISSUE: KeyError_in_manager_py"
     echo "    SEVERITY: CRITICAL"
@@ -373,6 +375,8 @@ fi
 # 認証問題分析
 for service in book000 book000_vrc ihc_amot tomachi_priv authorizedkey tomarabbit; do
     service_auth_count=$(echo "$detailed_logs" | grep -c "${service}-1.*認証エラー\|${service}-1.*401" 2>/dev/null || echo "0")
+    service_auth_count=$(echo "$service_auth_count" | tr -d '\n\r' | grep -o '[0-9]*' | head -1)
+    [ -z "$service_auth_count" ] && service_auth_count=0
     if [ "$service_auth_count" -gt 3 ]; then
         echo "  ISSUE: Authentication_failure_${service}"
         echo "    SEVERITY: HIGH"
@@ -388,6 +392,11 @@ done
 for service in book000 book000_vrc ihc_amot tomachi_priv authorizedkey tomarabbit; do
     service_blocks=$(echo "$detailed_logs" | grep -c "${service}-1.*ブロック成功" 2>/dev/null || echo "0")
     service_errors=$(echo "$detailed_logs" | grep -c "${service}-1.*エラー\|${service}-1.*ERROR" 2>/dev/null || echo "0")
+    
+    service_blocks=$(echo "$service_blocks" | tr -d '\n\r' | grep -o '[0-9]*' | head -1)
+    service_errors=$(echo "$service_errors" | tr -d '\n\r' | grep -o '[0-9]*' | head -1)
+    [ -z "$service_blocks" ] && service_blocks=0
+    [ -z "$service_errors" ] && service_errors=0
     
     if [ "$service_errors" -gt 10 ] && [ "$service_blocks" -eq 0 ]; then
         echo "  ISSUE: Service_performance_degradation_${service}"
@@ -428,6 +437,8 @@ echo "  HIGH_PRIORITY_FIXES:"
 auth_issues_found=false
 for service in book000 book000_vrc ihc_amot tomachi_priv authorizedkey tomarabbit; do
     service_auth_count=$(echo "$detailed_logs" | grep -c "${service}-1.*認証エラー\|${service}-1.*401" 2>/dev/null || echo "0")
+    service_auth_count=$(echo "$service_auth_count" | tr -d '\n\r' | grep -o '[0-9]*' | head -1)
+    [ -z "$service_auth_count" ] && service_auth_count=0
     if [ "$service_auth_count" -gt 3 ]; then
         if [ "$auth_issues_found" = false ]; then
             echo "    1. Update authentication cookies"
@@ -443,6 +454,11 @@ perf_issues_found=false
 for service in book000 book000_vrc ihc_amot tomachi_priv authorizedkey tomarabbit; do
     service_blocks=$(echo "$detailed_logs" | grep -c "${service}-1.*ブロック成功" 2>/dev/null || echo "0")
     service_errors=$(echo "$detailed_logs" | grep -c "${service}-1.*エラー\|${service}-1.*ERROR" 2>/dev/null || echo "0")
+    
+    service_blocks=$(echo "$service_blocks" | tr -d '\n\r' | grep -o '[0-9]*' | head -1)
+    service_errors=$(echo "$service_errors" | tr -d '\n\r' | grep -o '[0-9]*' | head -1)
+    [ -z "$service_blocks" ] && service_blocks=0
+    [ -z "$service_errors" ] && service_errors=0
     
     if [ "$service_errors" -gt 10 ] && [ "$service_blocks" -eq 0 ]; then
         if [ "$perf_issues_found" = false ]; then
