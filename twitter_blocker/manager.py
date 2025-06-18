@@ -179,7 +179,7 @@ class BulkBlockManager:
                     processed_count += 1
                 elif user_id in permanent_failures:
                     failure_info = permanent_failures[user_id]
-                    user_status = failure_info.get("user_status", "unknown")
+                    user_status = failure_info.get("user_status", "unknown") if failure_info else "unknown"
                     print(f"  ⚠ スキップ: {user_id} 既知の永続的失敗 ({user_status})")
                     stats["skipped"] += 1
                     processed_count += 1
@@ -292,7 +292,7 @@ class BulkBlockManager:
                     processed_count += 1
                 elif screen_name in permanent_failures:
                     failure_info = permanent_failures[screen_name]
-                    user_status = failure_info.get("user_status", "unknown")
+                    user_status = failure_info.get("user_status", "unknown") if failure_info else "unknown"
                     print(f"  ⚠ スキップ: @{screen_name} 既知の永続的失敗 ({user_status})")
                     stats["skipped"] += 1
                     processed_count += 1
