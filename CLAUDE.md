@@ -69,6 +69,9 @@ for user in users:
 - `.claude/workflows/issue-handling.md` - Issue対応完全自動化プロセス
 - `.claude/workflows/emergency.md` - 緊急事態対応プロトコル
 
+### 運用管理
+- `.claude/operations/cinnamon-server.md` - 本番Cinnamonサーバー運用ガイド
+
 ### トラブルシューティング
 - `.claude/troubleshooting/common-issues.md` - よくある問題と解決手順
 
@@ -79,17 +82,15 @@ for user in users:
 
 ### よく使うコマンド
 ```bash
-# 全品質チェック
-python3 -m py_compile twitter_blocker/*.py
+# 開発環境
+python3 -m py_compile twitter_blocker/*.py  # 全品質チェック
+/check-api-status                          # APIステータス確認
+/analyze-performance database              # パフォーマンス分析
+/debug-issue "問題の説明"                    # 緊急デバッグ
 
-# APIステータス確認
-/check-api-status
-
-# パフォーマンス分析
-/analyze-performance database
-
-# 緊急デバッグ
-/debug-issue "問題の説明"
+# 本番環境（Cinnamonサーバー）
+/project:check-cinnamon                    # サーバー状態調査
+/project:restart-service [service_name]    # サービス再起動
 ```
 
 ### 重要な数値
