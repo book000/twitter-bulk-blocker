@@ -399,8 +399,8 @@ class BulkBlockManager:
             # 永続的失敗チェック（API呼び出し前）
             if self.database.is_permanent_failure(lookup_key, user_format):
                 failure_info = self.database.get_permanent_failure_info(lookup_key, user_format)
-                user_status = failure_info.get("user_status", "unknown")
-                error_message = failure_info.get("error_message", "")
+                user_status = failure_info.get("user_status", "unknown") if failure_info else "unknown"
+                error_message = failure_info.get("error_message", "") if failure_info else ""
                 
                 # ユーザー識別子を含めてログ出力
                 if user_format == "user_id":
@@ -490,7 +490,7 @@ class BulkBlockManager:
             # 永続的失敗チェック（リトライ前）
             if self.database.is_permanent_failure(screen_name, "screen_name"):
                 failure_info = self.database.get_permanent_failure_info(screen_name, "screen_name")
-                user_status = failure_info.get("user_status", "unknown")
+                user_status = failure_info.get("user_status", "unknown") if failure_info else "unknown"
                 print(f"  ⚠ スキップ: 既知の永続的失敗 ({user_status}) - ユーザー: @{screen_name} - リトライ不要")
                 stats["skipped"] += 1
                 return

@@ -18,11 +18,120 @@ Cinnamonサーバーは複数のTwitterアカウントで自動ブロック処�
 
 ## Claude Codeコマンド
 
-### `/project:check-cinnamon`
-包括的なサーバー状態調査を実行
+### `/project:check-cinnamon` - AI最適化版
+**概要**: Claude Code専用の包括的サーバー監視・問題特定・修正提案システム
+
+**実行方法**: 
+```bash
+.claude/cinnamon-logs-ai-optimized.sh
+```
+
+**特徴**:
+- 構造化された問題特定
+- 具体的なコード修正提案
+- 重要度別の問題分類
+- 自動修正可能な項目の識別
+
+**出力形式**:
+```
+SECTION_START: セクション名
+FINDING: severity=CRITICAL category=CODE message="問題説明"
+  DETAILS: 詳細情報
+  RECOMMENDED_ACTION: 推奨対応
+SECTION_END: セクション名
+```
 
 ### `/project:restart-service [service_name]`
 指定サービスまたは全サービスの再起動
+
+## AI最適化監視システム
+
+### 利用可能なスクリプト
+
+#### 1. メイン監視スクリプト (推奨)
+```bash
+.claude/cinnamon-logs-ai-optimized.sh
+```
+**目的**: Claude Codeによる自動問題特定・修正
+**出力**: 構造化された分析結果、具体的修正提案
+
+#### 2. 統合監視インターフェース
+```bash
+.claude/cinnamon-monitor-suite.sh [mode]
+```
+**利用可能モード**:
+- `basic`: 基本ログ調査
+- `advanced`: 高度分析
+- `trend`: エラートレンド分析  
+- `quick`: 5分間クイック診断
+- `emergency`: 緊急診断モード
+- `ai`: AI最適化分析 (推奨)
+
+### 問題検出パターン
+
+#### KeyError: 'error_message' (CRITICAL)
+**検出方法**: `CODE_ANALYSIS_RECOMMENDATIONS`セクション
+```
+ISSUE: KeyError_in_manager_py
+  SEVERITY: CRITICAL
+  FILE: twitter_blocker/manager.py
+  LINES: 402-403, 493
+  CODE_FIX: 'failure_info.get("key", default) if failure_info else default'
+```
+**自動修正**: manager.pyの安全な辞書アクセスパターンに変更
+
+#### 認証エラー多発 (HIGH)
+**検出方法**: `AUTHENTICATION_STATUS`セクション
+```
+ISSUE: Authentication_failure_service_name
+  SEVERITY: HIGH
+  SERVICE: service_name
+  SOLUTION: Update cookies.json for service_name
+```
+**対応**: 該当サービスのCookie更新
+
+#### パフォーマンス劣化 (MEDIUM)
+**検出方法**: `PERFORMANCE_ANALYSIS`セクション
+```
+ISSUE: Service_performance_degradation_service_name
+  ERRORS: エラー数
+  SUCCESSFUL_BLOCKS: 成功数
+```
+**対応**: サービス設定見直し・再起動
+
+### Claude Code期待動作
+
+#### 正常時の出力
+```
+OVERALL_STATUS: HEALTHY
+TOTAL_FINDINGS: 0
+ACTIONABLE_ITEMS: MAINTENANCE_ONLY
+```
+
+#### 問題検出時の出力
+```
+OVERALL_STATUS: CRITICAL
+TOTAL_FINDINGS: 3
+ACTIONABLE_ITEMS: YES
+
+IMMEDIATE_FIXES_REQUIRED:
+  1. Fix KeyError in manager.py failure_info handling
+```
+
+### 自動修正ワークフロー
+
+```mermaid
+graph TD
+    A[check-cinnamon実行] --> B[構造化出力解析]
+    B --> C{CRITICAL問題?}
+    C -->|Yes| D[自動コード修正]
+    C -->|No| E{HIGH問題?}
+    E -->|Yes| F[設定・Cookie更新]
+    E -->|No| G[監視継続]
+    D --> H[修正後検証]
+    F --> H
+    H --> A
+```
 
 ## 運用監視
 
