@@ -637,8 +637,8 @@ class BulkBlockManager:
             )
         else:
             error_msg = (
-                block_result["error_message"][:200]
-                if block_result["error_message"]
+                block_result.get("error_message", "Unknown error")[:200]
+                if block_result.get("error_message")
                 else "Unknown error"
             )
             print(f"  ✗ ブロック失敗: {block_result['status_code']} - {error_msg}")
@@ -648,7 +648,7 @@ class BulkBlockManager:
             if self.retry_manager.should_retry(
                 user_status,
                 block_result["status_code"],
-                block_result["error_message"],
+                block_result.get("error_message", "Unknown error"),
                 0,
             ):
                 print("    → リトライ対象として記録")
@@ -659,7 +659,7 @@ class BulkBlockManager:
                     user_info["name"],
                     False,
                     block_result["status_code"],
-                    block_result["error_message"],
+                    block_result.get("error_message", "Unknown error"),
                     user_status,
                     0,
                 )
@@ -672,7 +672,7 @@ class BulkBlockManager:
                     user_info["name"],
                     False,
                     block_result["status_code"],
-                    f"{block_result['error_message']} (permanent)",
+                    f"{block_result.get('error_message', 'Unknown error')} (permanent)",
                     user_status,
                     0,
                 )
