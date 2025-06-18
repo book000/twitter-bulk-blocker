@@ -460,6 +460,96 @@ class DatabaseManager:
         
         return affected_rows
 
+    def is_permanent_failure(self, identifier: str, user_format: str = "screen_name") -> bool:
+        """永続的失敗アカウントかどうかをチェック"""
+        from .retry import RetryManager
+        
+        conn = sqlite3.connect(self.db_file)
+        cursor = conn.cursor()
+
+        if user_format == "user_id":
+            cursor.execute(
+                """
+                SELECT user_status, response_code, error_message, retry_count
+                FROM block_history 
+                WHERE user_id = ? AND status = 'failed'
+            """,
+                (str(identifier),),
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT user_status, response_code, error_message, retry_count
+                FROM block_history 
+                WHERE screen_name = ? AND status = 'failed'
+            """,
+                (str(identifier),),
+            )
+
+        result = cursor.fetchone()
+        conn.close()
+
+        if not result:
+            return False
+
+        user_status, response_code, error_message, retry_count = result
+        
+        # RetryManagerで永続的失敗かどうかを判定
+        retry_manager = RetryManager()
+        return not retry_manager.should_retry(
+            user_status or "unknown",
+            response_code or 0,
+            error_message or "",
+            retry_count or 0
+        )
+
+    def get_permanent_failure_info(self, identifier: str, user_format: str = "screen_name") -> Optional[Dict[str, Any]]:
+        """永続的失敗アカウントの詳細情報を取得"""
+        conn = sqlite3.connect(self.db_file)
+        cursor = conn.cursor()
+
+        if user_format == "user_id":
+            cursor.execute(
+                """
+                SELECT screen_name, user_id, display_name, user_status, 
+                       response_code, error_message, retry_count, blocked_at
+                FROM block_history 
+                WHERE user_id = ? AND status = 'failed'
+            """,
+                (str(identifier),),
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT screen_name, user_id, display_name, user_status, 
+                       response_code, error_message, retry_count, blocked_at
+                FROM block_history 
+                WHERE screen_name = ? AND status = 'failed'
+            """,
+                (str(identifier),),
+            )
+
+        result = cursor.fetchone()
+        conn.close()
+
+        if not result:
+            return None
+
+        (screen_name, user_id, display_name, user_status, 
+         response_code, error_message, retry_count, blocked_at) = result
+
+        return {
+            "screen_name": screen_name,
+            "user_id": user_id,
+            "display_name": display_name,
+            "user_status": user_status or "unknown",
+            "response_code": response_code,
+            "error_message": error_message,
+            "retry_count": retry_count,
+            "blocked_at": blocked_at,
+            "permanent_failure": True
+        }
+
     def _get_retry_delay(self, retry_count: int, base_delay: int = 30) -> int:
         """リトライ間隔を計算（指数バックオフ）"""
         return base_delay * (2**retry_count)

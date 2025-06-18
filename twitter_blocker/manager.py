@@ -173,11 +173,17 @@ class BulkBlockManager:
                     print(f"  ℹ スキップ: {user_id} 既にブロック済み")
                     stats["skipped"] += 1
                     processed_count += 1
+                elif self.database.is_permanent_failure(user_id, user_format):
+                    failure_info = self.database.get_permanent_failure_info(user_id, user_format)
+                    user_status = failure_info.get("user_status", "unknown")
+                    print(f"  ⚠ スキップ: {user_id} 既知の永続的失敗 ({user_status})")
+                    stats["skipped"] += 1
+                    processed_count += 1
                 else:
                     unchecked_ids.append(user_id)
             
             if not unchecked_ids:
-                print(f"  → 全{len(batch_ids)}ユーザーがブロック済み")
+                print(f"  → 全{len(batch_ids)}ユーザーが処理済み（ブロック済み/永続的失敗）")
                 continue
             
             try:
@@ -276,11 +282,17 @@ class BulkBlockManager:
                     print(f"  ℹ スキップ: @{screen_name} 既にブロック済み")
                     stats["skipped"] += 1
                     processed_count += 1
+                elif self.database.is_permanent_failure(screen_name, user_format):
+                    failure_info = self.database.get_permanent_failure_info(screen_name, user_format)
+                    user_status = failure_info.get("user_status", "unknown")
+                    print(f"  ⚠ スキップ: @{screen_name} 既知の永続的失敗 ({user_status})")
+                    stats["skipped"] += 1
+                    processed_count += 1
                 else:
                     unchecked_names.append(screen_name)
             
             if not unchecked_names:
-                print(f"  → 全{len(batch_names)}ユーザーがブロック済み")
+                print(f"  → 全{len(batch_names)}ユーザーが処理済み（ブロック済み/永続的失敗）")
                 continue
             
             try:
@@ -376,6 +388,19 @@ class BulkBlockManager:
                 stats["skipped"] += 1
                 return
 
+            # 永続的失敗チェック（API呼び出し前）
+            if self.database.is_permanent_failure(lookup_key, user_format):
+                failure_info = self.database.get_permanent_failure_info(lookup_key, user_format)
+                user_status = failure_info.get("user_status", "unknown")
+                error_message = failure_info.get("error_message", "")
+                
+                print(f"  ⚠ スキップ: 既知の永続的失敗 ({user_status})")
+                if error_message and not error_message.endswith("(permanent)"):
+                    print(f"    理由: {error_message}")
+                
+                stats["skipped"] += 1
+                return
+
             # ユーザー情報を取得
             if user_format == "user_id":
                 user_info = self.api.get_user_info_by_id(user_identifier)
@@ -449,6 +474,14 @@ class BulkBlockManager:
         )
 
         try:
+            # 永続的失敗チェック（リトライ前）
+            if self.database.is_permanent_failure(screen_name, "screen_name"):
+                failure_info = self.database.get_permanent_failure_info(screen_name, "screen_name")
+                user_status = failure_info.get("user_status", "unknown")
+                print(f"  ⚠ スキップ: 既知の永続的失敗 ({user_status}) - リトライ不要")
+                stats["skipped"] += 1
+                return
+
             # 最新のユーザー情報を再取得
             user_info = self.api.get_user_info(screen_name)
 
