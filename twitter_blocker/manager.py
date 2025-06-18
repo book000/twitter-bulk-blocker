@@ -623,7 +623,7 @@ class BulkBlockManager:
         print(f"  → ブロック実行: {user_info['name']} (ID: {user_info['id']})")
         block_result = self.api.block_user(user_info["id"], screen_name)
 
-        if block_result["success"]:
+        if block_result.get("success", False):
             print("  ✓ ブロック成功")
             stats["blocked"] += 1
             self.database.record_block_result(
@@ -631,7 +631,7 @@ class BulkBlockManager:
                 user_info["id"],
                 user_info["name"],
                 True,
-                block_result["status_code"],
+                block_result.get("status_code", 200),
                 None,
                 user_info.get("user_status", "active"),
             )
@@ -641,14 +641,18 @@ class BulkBlockManager:
                 if block_result.get("error_message")
                 else "Unknown error"
             )
-            print(f"  ✗ ブロック失敗: {block_result['status_code']} - {error_msg}")
+            status_code = block_result.get("status_code", 0)
+            print(f"  ✗ ブロック失敗: {status_code} - {error_msg}")
 
             # リトライ判定
             user_status = user_info.get("user_status", "active")
+            status_code = block_result.get("status_code", 0)
+            error_message = block_result.get("error_message", "Unknown error")
+            
             if self.retry_manager.should_retry(
                 user_status,
-                block_result["status_code"],
-                block_result.get("error_message", "Unknown error"),
+                status_code,
+                error_message,
                 0,
             ):
                 print("    → リトライ対象として記録")
@@ -658,8 +662,8 @@ class BulkBlockManager:
                     user_info["id"],
                     user_info["name"],
                     False,
-                    block_result["status_code"],
-                    block_result.get("error_message", "Unknown error"),
+                    status_code,
+                    error_message,
                     user_status,
                     0,
                 )
@@ -671,8 +675,8 @@ class BulkBlockManager:
                     user_info["id"],
                     user_info["name"],
                     False,
-                    block_result["status_code"],
-                    f"{block_result.get('error_message', 'Unknown error')} (permanent)",
+                    status_code,
+                    f"{error_message} (permanent)",
                     user_status,
                     0,
                 )

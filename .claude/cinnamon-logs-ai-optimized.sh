@@ -61,14 +61,14 @@ else
     healthy_containers=0
     
     while IFS=$'\t' read -r service state health status; do
-        if [ -n "$service" ]; then
-            ((total_containers++))
+        if [ -n "$service" ] && [ "$service" != "SERVICE" ]; then
+            total_containers=$((total_containers + 1))
             echo "  SERVICE: $service STATE: $state HEALTH: $health STATUS: $status"
             
             if [ "$state" = "running" ]; then
-                ((running_containers++))
+                running_containers=$((running_containers + 1))
                 if [ "$health" = "healthy" ] || [ -z "$health" ]; then
-                    ((healthy_containers++))
+                    healthy_containers=$((healthy_containers + 1))
                 else
                     output_finding "WARNING" "CONTAINER" "Service $service unhealthy" \
                         "Health status: $health" \
@@ -102,49 +102,56 @@ output_section_end "SYSTEM_STATUS"
 # 2. エラー分析
 output_section "ERROR_ANALYSIS"
 
+# 詳細ログ取得（他のセクションでも使用）
+detailed_logs=$(ssh Cinnamon "cd $CINNAMON_PATH && docker compose logs --tail 1000" 2>/dev/null)
+
 # 最新エラー統計（過去1000行）
-error_stats=$(ssh Cinnamon "cd $CINNAMON_PATH && docker compose logs --tail 1000 | grep -E '(エラー|ERROR|failed|401|403|429|500)' | sort | uniq -c | sort -nr | head -10" 2>/dev/null)
+error_stats=$(echo "$detailed_logs" | grep -E '(エラー|ERROR|failed|401|403|429|500)' | sort | uniq -c | sort -nr | head -10)
 
 if [ -n "$error_stats" ]; then
     echo "ERROR_STATISTICS:"
     echo "$error_stats"
     echo "ERROR_ANALYSIS:"
     
-    # エラーパターンの分析
-    auth_errors=$(echo "$error_stats" | grep -E "(認証|401|Authentication)" | head -1 | awk '{print $1}' || echo "0")
-    forbidden_errors=$(echo "$error_stats" | grep -E "(403|Forbidden)" | head -1 | awk '{print $1}' || echo "0")
-    rate_limit_errors=$(echo "$error_stats" | grep -E "(429|Rate.*limit)" | head -1 | awk '{print $1}' || echo "0")
-    batch_errors=$(echo "$error_stats" | grep -E "(バッチ処理|KeyError)" | head -1 | awk '{print $1}' || echo "0")
+    # エラーパターンの分析（安全な整数変換）
+    auth_errors=$(echo "$error_stats" | grep -E "(認証|401|Authentication)" | head -1 | awk '{print $1}' | tr -d '\n\r' || echo "0")
+    auth_errors=${auth_errors:-0}
+    forbidden_errors=$(echo "$error_stats" | grep -E "(403|Forbidden)" | head -1 | awk '{print $1}' | tr -d '\n\r' || echo "0")
+    forbidden_errors=${forbidden_errors:-0}
+    rate_limit_errors=$(echo "$error_stats" | grep -E "(429|Rate.*limit)" | head -1 | awk '{print $1}' | tr -d '\n\r' || echo "0")
+    rate_limit_errors=${rate_limit_errors:-0}
+    batch_errors=$(echo "$error_stats" | grep -E "(バッチ処理|KeyError)" | head -1 | awk '{print $1}' | tr -d '\n\r' || echo "0")
+    batch_errors=${batch_errors:-0}
     
     echo "  AUTH_ERRORS: $auth_errors"
     echo "  FORBIDDEN_ERRORS: $forbidden_errors"
     echo "  RATE_LIMIT_ERRORS: $rate_limit_errors"
     echo "  BATCH_ERRORS: $batch_errors"
     
-    # 重要度判定
-    if [ "$auth_errors" -gt 20 ]; then
+    # 重要度判定（安全な整数比較）
+    if [ "${auth_errors:-0}" -gt 20 ] 2>/dev/null; then
         output_finding "CRITICAL" "AUTH" "High authentication error rate" \
             "$auth_errors authentication errors detected" \
             "Update cookies for all services immediately"
-    elif [ "$auth_errors" -gt 5 ]; then
+    elif [ "${auth_errors:-0}" -gt 5 ] 2>/dev/null; then
         output_finding "WARNING" "AUTH" "Authentication errors detected" \
             "$auth_errors authentication errors found" \
             "Check and update cookies for affected services"
     fi
     
-    if [ "$forbidden_errors" -gt 10 ]; then
+    if [ "${forbidden_errors:-0}" -gt 10 ] 2>/dev/null; then
         output_finding "CRITICAL" "API" "High 403 error rate" \
             "$forbidden_errors forbidden errors detected" \
             "Check API permissions and rate limiting"
     fi
     
-    if [ "$rate_limit_errors" -gt 15 ]; then
+    if [ "${rate_limit_errors:-0}" -gt 15 ] 2>/dev/null; then
         output_finding "WARNING" "RATE_LIMIT" "Rate limiting issues" \
             "$rate_limit_errors rate limit errors" \
             "Adjust processing intervals or reduce concurrent requests"
     fi
     
-    if [ "$batch_errors" -gt 0 ]; then
+    if [ "${batch_errors:-0}" -gt 0 ] 2>/dev/null; then
         output_finding "CRITICAL" "CODE" "Batch processing errors" \
             "$batch_errors batch processing errors detected" \
             "Fix KeyError in manager.py failure_info handling"
@@ -168,13 +175,14 @@ if [ -n "$auth_details" ]; then
     echo "SERVICE_AUTH_ANALYSIS:"
     for service in book000 book000_vrc ihc_amot tomachi_priv authorizedkey tomarabbit; do
         service_auth_errors=$(echo "$auth_details" | grep -c "${service}-1" 2>/dev/null || echo "0")
+        service_auth_errors=${service_auth_errors:-0}
         echo "  SERVICE: $service AUTH_ERRORS: $service_auth_errors"
         
-        if [ "$service_auth_errors" -gt 5 ]; then
+        if [ "${service_auth_errors:-0}" -gt 5 ] 2>/dev/null; then
             output_finding "CRITICAL" "AUTH" "Service $service authentication failure" \
                 "$service_auth_errors authentication errors" \
                 "Update cookies for $service service"
-        elif [ "$service_auth_errors" -gt 0 ]; then
+        elif [ "${service_auth_errors:-0}" -gt 0 ] 2>/dev/null; then
             output_finding "WARNING" "AUTH" "Service $service authentication issues" \
                 "$service_auth_errors authentication errors" \
                 "Monitor and consider cookie update for $service"
@@ -204,16 +212,18 @@ if [ -n "$rate_limit_status" ]; then
             limit=$(echo "$line" | grep -o 'Rate Limit: [0-9]*/[0-9]*' | cut -d'/' -f2)
             service=$(echo "$line" | grep -o '[a-zA-Z_]*-1' | sed 's/-1//')
             
-            if [ -n "$current" ] && [ -n "$limit" ] && [ "$limit" -gt 0 ]; then
+            if [ -n "$current" ] && [ -n "$limit" ] && [ "${limit:-0}" -gt 0 ] 2>/dev/null; then
+                current=${current:-0}
+                limit=${limit:-1}
                 remaining=$((limit - current))
                 usage_percent=$((current * 100 / limit))
                 echo "  SERVICE: $service USED: $current LIMIT: $limit USAGE: ${usage_percent}%"
                 
-                if [ $usage_percent -gt 90 ]; then
+                if [ "${usage_percent:-0}" -gt 90 ] 2>/dev/null; then
                     output_finding "CRITICAL" "RATE_LIMIT" "Service $service rate limit critical" \
                         "Usage: ${usage_percent}% ($current/$limit)" \
                         "Reduce processing rate or pause service temporarily"
-                elif [ $usage_percent -gt 80 ]; then
+                elif [ "${usage_percent:-0}" -gt 80 ] 2>/dev/null; then
                     output_finding "WARNING" "RATE_LIMIT" "Service $service rate limit high" \
                         "Usage: ${usage_percent}% ($current/$limit)" \
                         "Monitor closely and consider rate reduction"
@@ -263,8 +273,11 @@ for service in "${services[@]}"; do
     
     # サービス固有の統計
     service_errors=$(ssh Cinnamon "cd $CINNAMON_PATH && docker compose logs $service --tail 100 | grep -c 'エラー\|ERROR\|failed'" 2>/dev/null || echo "0")
+    service_errors=${service_errors:-0}
     service_blocks=$(ssh Cinnamon "cd $CINNAMON_PATH && docker compose logs $service --tail 100 | grep -c 'ブロック成功'" 2>/dev/null || echo "0")
+    service_blocks=${service_blocks:-0}
     service_auth_errors=$(ssh Cinnamon "cd $CINNAMON_PATH && docker compose logs $service --tail 100 | grep -c '認証エラー\|401'" 2>/dev/null || echo "0")
+    service_auth_errors=${service_auth_errors:-0}
     
     echo "    ERRORS: $service_errors"
     echo "    BLOCKS: $service_blocks"
@@ -276,16 +289,16 @@ for service in "${services[@]}"; do
         echo "    LATEST_ACTIVITY: $latest_activity"
     fi
     
-    # サービス状態判定
-    if [ "$service_auth_errors" -gt 3 ]; then
+    # サービス状態判定（安全な整数比較）
+    if [ "${service_auth_errors:-0}" -gt 3 ] 2>/dev/null; then
         output_finding "CRITICAL" "SERVICE" "Service $service authentication issues" \
             "$service_auth_errors auth errors detected" \
             "Update cookies for $service"
-    elif [ "$service_errors" -gt 10 ] && [ "$service_blocks" -eq 0 ]; then
+    elif [ "${service_errors:-0}" -gt 10 ] 2>/dev/null && [ "${service_blocks:-0}" -eq 0 ] 2>/dev/null; then
         output_finding "WARNING" "SERVICE" "Service $service error rate high" \
             "$service_errors errors with no successful blocks" \
             "Investigate $service service logs"
-    elif [ "$service_blocks" -gt 0 ]; then
+    elif [ "${service_blocks:-0}" -gt 0 ] 2>/dev/null; then
         output_finding "OK" "SERVICE" "Service $service operating normally" \
             "$service_blocks successful blocks, $service_errors errors"
     fi
@@ -488,17 +501,17 @@ fi
 
 echo "ISSUE_COUNTS: critical=$critical_issues warning=$warning_issues"
 
-if [ $critical_issues -gt 0 ]; then
+if [ "${critical_issues:-0}" -gt 0 ] 2>/dev/null; then
     echo "OVERALL_STATUS: CRITICAL"
     output_finding "CRITICAL" "SYSTEM" "System requires immediate attention" \
         "$critical_issues critical issues, $warning_issues warnings" \
         "Address critical issues immediately before proceeding"
-elif [ $warning_issues -gt 3 ]; then
+elif [ "${warning_issues:-0}" -gt 3 ] 2>/dev/null; then
     echo "OVERALL_STATUS: WARNING"
     output_finding "WARNING" "SYSTEM" "System requires attention" \
         "$warning_issues warning issues" \
         "Address warning issues to prevent escalation"
-elif [ $warning_issues -gt 0 ]; then
+elif [ "${warning_issues:-0}" -gt 0 ] 2>/dev/null; then
     echo "OVERALL_STATUS: ATTENTION"
     output_finding "INFO" "SYSTEM" "System operating with minor issues" \
         "$warning_issues minor issues" \
@@ -513,7 +526,7 @@ fi
 # 改善のための推奨アクション
 echo "RECOMMENDED_ACTIONS:"
 echo "  IMMEDIATE:"
-if [ $critical_issues -gt 0 ]; then
+if [ "${critical_issues:-0}" -gt 0 ] 2>/dev/null; then
     echo "    - Address critical issues identified in CODE_ANALYSIS_RECOMMENDATIONS"
 fi
 echo "  SHORT_TERM:"
@@ -535,7 +548,7 @@ echo "  ANALYSIS_DEPTH: comprehensive"
 echo "  SERVICES_MONITORED: 6"
 echo "  ERROR_PATTERNS_CHECKED: 15"
 echo "  CODE_ISSUES_IDENTIFIED: $([ "$keyerror_count" -gt 0 ] && echo "1" || echo "0")"
-echo "  PERFORMANCE_ISSUES: $([ $warning_issues -gt 0 ] && echo "$warning_issues" || echo "0")"
+echo "  PERFORMANCE_ISSUES: $([ "${warning_issues:-0}" -gt 0 ] 2>/dev/null && echo "$warning_issues" || echo "0")"
 echo "  AUTHENTICATION_ISSUES: $([ "${auth_errors:-0}" -gt 0 ] && echo "1" || echo "0")"
 
 echo "CONFIDENCE_METRICS:"
