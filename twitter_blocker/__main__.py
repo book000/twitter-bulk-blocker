@@ -27,6 +27,12 @@ def main():
         "--reset-retry", action="store_true", help="失敗ユーザーのリトライ回数をリセット"
     )
     parser.add_argument(
+        "--clear-errors", action="store_true", help="失敗ユーザーのエラーメッセージをクリア"
+    )
+    parser.add_argument(
+        "--reset-failed", action="store_true", help="失敗ユーザーの状態を完全リセット（エラーメッセージ、リトライ回数、ステータス）"
+    )
+    parser.add_argument(
         "--auto-retry",
         action="store_true",
         help="--allと組み合わせて使用：実行後に自動でリトライ処理も実行",
@@ -69,7 +75,7 @@ def main():
     args = parser.parse_args()
 
     # ファイル存在チェック
-    if not args.stats and not args.retry and not args.reset_retry and not args.debug_errors and not args.test_user:
+    if not args.stats and not args.retry and not args.reset_retry and not args.clear_errors and not args.reset_failed and not args.debug_errors and not args.test_user:
         if not os.path.exists(args.cookies):
             print(f"❌ エラー: クッキーファイルが見つかりません: {args.cookies}")
             print("正しいパスを指定してください:")
@@ -128,6 +134,22 @@ def main():
     # リトライ回数リセット処理
     if args.reset_retry:
         manager.reset_retry_counts()
+        return
+
+    # エラーメッセージクリア処理
+    if args.clear_errors:
+        affected = manager.database.clear_error_messages()
+        print(f"✅ {affected}件のエラーメッセージをクリアしました")
+        return
+
+    # 失敗ユーザー完全リセット処理
+    if args.reset_failed:
+        affected = manager.database.reset_failed_users()
+        print(f"✅ {affected}件の失敗ユーザーを完全リセットしました")
+        print("  - エラーメッセージ: クリア")
+        print("  - リトライ回数: 0")
+        print("  - レスポンスコード: クリア")
+        print("  - ユーザーステータス: クリア")
         return
 
     # リトライ処理
