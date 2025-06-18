@@ -300,3 +300,9 @@ block_candidates.txt
 cache/
 *.cache
 .cache/
+
+# Claude Code project-specific configuration - sensitive files only
+.claude/cookies/
+.claude/secrets/
+.claude/private/
+.claude/*.log
