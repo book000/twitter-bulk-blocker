@@ -54,36 +54,6 @@ class TwitterAPI:
         self._auth_retry_count = 0  # 認証エラー時の再試行カウント
         self._max_auth_retries = 1  # 最大認証再試行回数
 
-    def _get_login_user_id(self) -> str:
-        """ログインユーザーのIDを取得（キャッシュ用）"""
-        if self._login_user_id is None:
-            try:
-                # Cookieからユーザー情報を取得してIDを特定
-                cookies = self.cookie_manager.load_cookies()
-                # Twitterのログインユーザー識別方法: twid cookieまたはpersonalization_id
-                
-                # Method 1: twid cookieから抽出
-                twid = cookies.get('twid')
-                if twid and twid.startswith('u%3D'):
-                    # URLデコード: u%3D -> u=
-                    import urllib.parse
-                    decoded = urllib.parse.unquote(twid)
-                    if decoded.startswith('u='):
-                        user_id = decoded[2:].split('%')[0]  # u=123456789%...
-                        self._login_user_id = user_id
-                        return self._login_user_id
-                
-                # Method 2: personalization_idまたはguest_idを使用
-                pid = cookies.get('personalization_id', cookies.get('guest_id', 'unknown'))
-                # ハッシュ化してユニークなIDとして使用
-                import hashlib
-                self._login_user_id = hashlib.md5(pid.encode()).hexdigest()[:12]
-                
-            except Exception:
-                # フォールバック: 固定ID
-                self._login_user_id = "default_user"
-        
-        return self._login_user_id
 
     def get_user_info(self, screen_name: str) -> Optional[Dict[str, Any]]:
         """スクリーンネームからユーザー情報を取得"""
@@ -965,74 +935,6 @@ class TwitterAPI:
         
         return self._login_user_id
 
-    def _get_lookup_from_cache(self, screen_name: str) -> Optional[Dict[str, Any]]:
-        """lookupキャッシュからデータを取得（screen_name -> user_id変換用）"""
-        safe_screen_name = "".join(c for c in screen_name if c.isalnum() or c in "._-")
-        cache_file = self.lookups_cache_dir / f"{safe_screen_name}.json"
-        
-        if cache_file.exists():
-            try:
-                # ファイルの更新時刻を確認
-                file_mtime = cache_file.stat().st_mtime
-                current_time = time.time()
-                
-                if current_time - file_mtime < self.cache_ttl:
-                    with open(cache_file, 'r', encoding='utf-8') as f:
-                        return json.load(f)
-                else:
-                    cache_file.unlink()
-            except Exception:
-                if cache_file.exists():
-                    try:
-                        cache_file.unlink()
-                    except:
-                        pass
-        
-        return None
-
-    def _save_lookup_to_cache(self, screen_name: str, user_id: str) -> None:
-        """lookupキャッシュに保存（screen_name -> user_id変換用）"""
-        safe_screen_name = "".join(c for c in screen_name if c.isalnum() or c in "._-")
-        cache_file = self.lookups_cache_dir / f"{safe_screen_name}.json"
-        
-        try:
-            data = {
-                "user_id": user_id,
-                "screen_name": screen_name,
-                "cached_at": datetime.now().isoformat()
-            }
-            with open(cache_file, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            print(f"lookupキャッシュ保存エラー ({screen_name}): {e}")
-
-    def _get_relationship_from_cache(self, user_id: str) -> Optional[Dict[str, Any]]:
-        """関係情報キャッシュからデータを取得（ログインユーザー別）"""
-        login_user_id = self._get_login_user_id()
-        user_cache_dir = self.relationships_cache_dir / login_user_id
-        
-        safe_user_id = "".join(c for c in user_id if c.isalnum() or c in "._-")
-        cache_file = user_cache_dir / f"{safe_user_id}.json"
-        
-        if cache_file.exists():
-            try:
-                # ファイルの更新時刻を確認
-                file_mtime = cache_file.stat().st_mtime
-                current_time = time.time()
-                
-                if current_time - file_mtime < self.cache_ttl:
-                    with open(cache_file, 'r', encoding='utf-8') as f:
-                        return json.load(f)
-                else:
-                    cache_file.unlink()
-            except Exception:
-                if cache_file.exists():
-                    try:
-                        cache_file.unlink()
-                    except:
-                        pass
-        
-        return None
 
     def _get_profile_from_cache(self, user_id: str) -> Optional[Dict[str, Any]]:
         """基本プロフィール情報キャッシュからデータを取得（共有）"""
@@ -1081,30 +983,6 @@ class TwitterAPI:
         except Exception as e:
             print(f"プロフィールキャッシュ保存エラー ({user_id}): {e}")
 
-    def _save_relationship_to_cache(self, user_id: str, user_data: Dict[str, Any]) -> None:
-        """関係情報キャッシュに保存（ログインユーザー別）"""
-        login_user_id = self._get_login_user_id()
-        user_cache_dir = self.relationships_cache_dir / login_user_id
-        user_cache_dir.mkdir(parents=True, exist_ok=True)
-        
-        safe_user_id = "".join(c for c in user_id if c.isalnum() or c in "._-")
-        cache_file = user_cache_dir / f"{safe_user_id}.json"
-        
-        try:
-            # 関係情報のみ抽出
-            relationship_only = {
-                "user_id": user_id,
-                "following": user_data.get("following", False),
-                "followed_by": user_data.get("followed_by", False),
-                "blocking": user_data.get("blocking", False),
-                "blocked_by": user_data.get("blocked_by", False),
-                "cached_at": datetime.now().isoformat()
-            }
-            
-            with open(cache_file, 'w', encoding='utf-8') as f:
-                json.dump(relationship_only, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            print(f"関係情報キャッシュ保存エラー ({user_id}): {e}")
 
     def _combine_profile_and_relationship(self, user_id: str) -> Optional[Dict[str, Any]]:
         """プロフィール情報と関係情報を結合"""

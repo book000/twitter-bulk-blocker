@@ -235,13 +235,18 @@ class BulkBlockManager:
                     time.sleep(delay)
                     
             except Exception as e:
-                print(f"  ✗ バッチ処理エラー: {e}")
+                import traceback
+                error_msg = f"{type(e).__name__}: {str(e)}" if str(e) else type(e).__name__
+                print(f"  ✗ バッチ処理エラー: {error_msg}")
+                print(f"  デバッグ情報: バッチサイズ={len(unchecked_ids)}, 開始インデックス={i}")
+                if self.api.debug_mode:
+                    print(f"  スタックトレース:\n{traceback.format_exc()}")
                 # バッチエラー時は個別処理にフォールバック
                 for user_id in unchecked_ids:
                     processed_count += 1
                     stats["errors"] += 1
                     self.database.record_block_result(
-                        None, user_id, None, False, 0, f"バッチ処理エラー: {str(e)}"
+                        None, user_id, None, False, 0, f"バッチ処理エラー: {error_msg}"
                     )
 
     def _process_screen_names_batch(
@@ -330,13 +335,18 @@ class BulkBlockManager:
                 )
                 
             except Exception as e:
-                print(f"  ✗ バッチ処理エラー: {e}")
+                import traceback
+                error_msg = f"{type(e).__name__}: {str(e)}" if str(e) else type(e).__name__
+                print(f"  ✗ バッチ処理エラー: {error_msg}")
+                print(f"  デバッグ情報: バッチサイズ={len(unchecked_names)}, 開始インデックス={i}")
+                if hasattr(self.api, 'debug_mode') and self.api.debug_mode:
+                    print(f"  スタックトレース:\n{traceback.format_exc()}")
                 # バッチエラー時は個別処理にフォールバック
                 for screen_name in unchecked_names:
                     processed_count += 1
                     stats["errors"] += 1
                     self.database.record_block_result(
-                        screen_name, None, None, False, 0, f"バッチ処理エラー: {str(e)}"
+                        screen_name, None, None, False, 0, f"バッチ処理エラー: {error_msg}"
                     )
 
     def _process_single_user(
@@ -406,7 +416,12 @@ class BulkBlockManager:
             time.sleep(delay)
 
         except Exception as e:
-            print(f"  ✗ 処理エラー: {e}")
+            import traceback
+            error_msg = f"{type(e).__name__}: {str(e)}" if str(e) else type(e).__name__
+            print(f"  ✗ 処理エラー: {error_msg}")
+            print(f"  デバッグ情報: ユーザー={user_identifier}, フォーマット={user_format}")
+            if hasattr(self.api, 'debug_mode') and self.api.debug_mode:
+                print(f"  スタックトレース:\n{traceback.format_exc()}")
             stats["errors"] += 1
             self.database.record_block_result(
                 lookup_key if user_format == "screen_name" else None,
@@ -414,7 +429,7 @@ class BulkBlockManager:
                 None,
                 False,
                 0,
-                str(e),
+                error_msg,
             )
 
     def _process_retry_user(
@@ -459,7 +474,12 @@ class BulkBlockManager:
             time.sleep(2.0)
 
         except Exception as e:
-            print(f"  ✗ リトライ処理エラー: {e}")
+            import traceback
+            error_msg = f"{type(e).__name__}: {str(e)}" if str(e) else type(e).__name__
+            print(f"  ✗ リトライ処理エラー: {error_msg}")
+            print(f"  デバッグ情報: ユーザー=@{screen_name}, リトライ回数={retry_count}")
+            if hasattr(self.api, 'debug_mode') and self.api.debug_mode:
+                print(f"  スタックトレース:\n{traceback.format_exc()}")
             stats["errors"] += 1
             self.database.record_block_result(
                 screen_name,
@@ -467,7 +487,7 @@ class BulkBlockManager:
                 candidate["display_name"],
                 False,
                 0,
-                f"リトライ処理エラー: {str(e)}",
+                f"リトライ処理エラー: {error_msg}",
                 None,
                 retry_count,
             )
