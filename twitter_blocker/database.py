@@ -460,6 +460,114 @@ class DatabaseManager:
         
         return affected_rows
 
+    def clear_error_messages(self, identifiers: Optional[List[str]] = None, user_format: str = "screen_name") -> int:
+        """エラーメッセージをクリア
+        
+        Args:
+            identifiers: 特定のユーザーのみクリアする場合の識別子リスト（Noneで全て）
+            user_format: 識別子の形式 ("screen_name" または "user_id")
+        """
+        conn = sqlite3.connect(self.db_file)
+        cursor = conn.cursor()
+
+        if identifiers:
+            placeholders = ",".join("?" * len(identifiers))
+            str_identifiers = [str(id_) for id_ in identifiers]
+            
+            if user_format == "user_id":
+                query = f"""
+                    UPDATE block_history 
+                    SET error_message = NULL
+                    WHERE status = 'failed' AND user_id IN ({placeholders})
+                """
+            else:
+                query = f"""
+                    UPDATE block_history 
+                    SET error_message = NULL
+                    WHERE status = 'failed' AND screen_name IN ({placeholders})
+                """
+            cursor.execute(query, str_identifiers)
+        else:
+            cursor.execute(
+                """
+                UPDATE block_history 
+                SET error_message = NULL
+                WHERE status = 'failed'
+                """
+            )
+
+        affected_rows = cursor.rowcount
+        conn.commit()
+        conn.close()
+        
+        return affected_rows
+
+    def reset_failed_users(self, identifiers: Optional[List[str]] = None, user_format: str = "screen_name", 
+                          reset_error_message: bool = True, reset_retry_count: bool = True,
+                          reset_response_code: bool = True, reset_user_status: bool = True) -> int:
+        """失敗ユーザーの状態をリセット
+        
+        Args:
+            identifiers: 特定のユーザーのみリセットする場合の識別子リスト（Noneで全て）
+            user_format: 識別子の形式 ("screen_name" または "user_id")
+            reset_error_message: エラーメッセージをリセットするか
+            reset_retry_count: リトライ回数をリセットするか
+            reset_response_code: レスポンスコードをリセットするか
+            reset_user_status: ユーザーステータスをリセットするか
+        """
+        conn = sqlite3.connect(self.db_file)
+        cursor = conn.cursor()
+
+        # リセットする項目を構築
+        reset_fields = []
+        if reset_error_message:
+            reset_fields.append("error_message = NULL")
+        if reset_retry_count:
+            reset_fields.append("retry_count = 0")
+            reset_fields.append("last_retry_at = NULL")
+        if reset_response_code:
+            reset_fields.append("response_code = NULL")
+        if reset_user_status:
+            reset_fields.append("user_status = NULL")
+        
+        if not reset_fields:
+            conn.close()
+            return 0
+        
+        set_clause = ", ".join(reset_fields)
+
+        if identifiers:
+            placeholders = ",".join("?" * len(identifiers))
+            str_identifiers = [str(id_) for id_ in identifiers]
+            
+            if user_format == "user_id":
+                query = f"""
+                    UPDATE block_history 
+                    SET {set_clause}
+                    WHERE status = 'failed' AND user_id IN ({placeholders})
+                """
+            else:
+                query = f"""
+                    UPDATE block_history 
+                    SET {set_clause}
+                    WHERE status = 'failed' AND screen_name IN ({placeholders})
+                """
+            cursor.execute(query, str_identifiers)
+        else:
+            cursor.execute(
+                f"""
+                UPDATE block_history 
+                SET {set_clause}
+                WHERE status = 'failed'
+                """
+            )
+
+        affected_rows = cursor.rowcount
+        conn.commit()
+        conn.close()
+        
+        return affected_rows
+
     def is_permanent_failure(self, identifier: str, user_format: str = "screen_name") -> bool:
         """永続的失敗アカウントかどうかをチェック"""
         from .retry import RetryManager
