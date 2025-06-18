@@ -10,7 +10,7 @@ Cinnamonサーバーの各種エラーを統計的に分析し、問題の優先
 $ARGUMENTSが指定されている場合は時間ベースの分析を実行:
 ```bash
 SINCE_TIME="$ARGUMENTS"
-ssh Cinnamon "cd /mnt/hdd/cinnamon/twitter-auto-blocking/bulk-block-users && docker compose logs --since='$SINCE_TIME' | grep -E '(エラー|error|failed|401|403|429|500)'"
+ssh Cinnamon "cd /mnt/hdd/cinnamon/twitter-auto-blocking/bulk-block-users && docker compose logs --since=\"$SINCE_TIME\" | grep -E '(エラー|error|failed|401|403|429|500)'"
 ```
 
 引数なしの場合は行数ベースの分析:
