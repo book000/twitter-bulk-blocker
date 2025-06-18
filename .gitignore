@@ -295,3 +295,8 @@ env/
 # Temporary research files
 block_candidates.txt
 *.candidates.txt
+
+# Cache directories (API responses and user data)
+cache/
+*.cache
+.cache/

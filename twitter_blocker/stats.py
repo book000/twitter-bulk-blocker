@@ -98,6 +98,6 @@ def _show_failure_breakdown(manager: BulkBlockManager) -> None:
         # otherが多い場合は実際のエラーメッセージのサンプルを表示
         if breakdown["by_error_type"].get("other", 0) > 0:
             print("  - エラーメッセージサンプル (other):")
-            error_samples = manager.database.get_error_message_samples(5)
-            for i, sample in enumerate(error_samples[:3], 1):
+            error_samples = manager.database.get_error_message_samples(3)
+            for i, sample in enumerate(error_samples, 1):
                 print(f"    {i}. {sample}")

@@ -20,11 +20,12 @@ class BulkBlockManager:
         users_file: str = "video_misuse_detecteds.json",
         db_file: str = "block_history.db",
         cache_dir: str = "/data/cache",
+        debug_mode: bool = False,
     ):
         self.config_manager = ConfigManager(users_file)
         self.cookie_manager = CookieManager(cookies_file)
         self.database = DatabaseManager(db_file)
-        self.api = TwitterAPI(self.cookie_manager, cache_dir)
+        self.api = TwitterAPI(self.cookie_manager, cache_dir, debug_mode)
         self.retry_manager = RetryManager()
 
     def load_target_users(self) -> List[str]:
