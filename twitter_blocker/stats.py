@@ -16,11 +16,35 @@ def show_stats(manager: BulkBlockManager) -> None:
 
     # データベースから詳細統計を取得
     detailed_stats = manager.database.get_detailed_stats()
+    
+    # 永続的失敗（処理済みとして扱う）の計算
+    permanent_failures = (
+        detailed_stats.get("suspended", 0) + 
+        detailed_stats.get("not_found", 0) + 
+        detailed_stats.get("deactivated", 0)
+    )
+    
+    # 実質的な処理済み数（ブロック済み + 永続的失敗）
+    processed_count = blocked_count + permanent_failures
+    
+    # 実質完了率の計算
+    if total_targets > 0:
+        actual_completion_rate = min(100.0, (processed_count / total_targets) * 100)
+        effective_remaining = max(0, total_targets - processed_count)
+    else:
+        actual_completion_rate = 100.0
+        effective_remaining = 0
 
     print("=== 処理統計 ===")
     print(f"全対象ユーザー: {total_targets:,}人")
-    print(f"ブロック済み: {blocked_count:,}人 ({blocked_count/total_targets*100:.1f}%)")
-    print(f"残り未処理: {remaining_count:,}人")
+    print(f"ブロック済み: {blocked_count:,}人")
+    if permanent_failures > 0:
+        print(f"永続的失敗: {permanent_failures:,}人 (suspended/not_found/deactivated)")
+        print(f"実質完了率: {actual_completion_rate:.1f}% (処理済み: {processed_count:,}/{total_targets:,})")
+        print(f"実質未処理: {effective_remaining:,}人")
+    else:
+        print(f"完了率: {actual_completion_rate:.1f}%")
+        print(f"残り未処理: {remaining_count:,}人")
 
     if detailed_stats["failed"] > 0:
         print(f"失敗: {detailed_stats['failed']}人")
@@ -30,11 +54,25 @@ def show_stats(manager: BulkBlockManager) -> None:
             print(f"  - リトライ可能: {detailed_stats['failed_retryable']}人")
         _show_failure_breakdown(manager)
 
+    # 処理完了状況の判定
+    if actual_completion_rate >= 100.0:
+        print("🎉 処理状況: 完全完了（100%）")
+        print("📋 説明: 全ユーザーが処理済み（ブロック成功 + 技術的にブロック不可能）")
+    elif effective_remaining > 0:
+        print(f"🔄 処理状況: 継続中 ({effective_remaining:,}人が未処理)")
+    
+    # 詳細な失敗内訳表示
     if detailed_stats["follow_relationship"] > 0:
-        print(f"フォロー関係でスキップ: {detailed_stats['follow_relationship']}人")
+        print(f"\nフォロー関係でスキップ: {detailed_stats['follow_relationship']}人")
 
     if detailed_stats["suspended"] > 0:
         print(f"suspended: {detailed_stats['suspended']}人")
+
+    if detailed_stats.get("not_found", 0) > 0:
+        print(f"not_found (削除済み): {detailed_stats['not_found']}人")
+        
+    if detailed_stats.get("deactivated", 0) > 0:
+        print(f"deactivated (無効化済み): {detailed_stats['deactivated']}人")
 
     if detailed_stats["unavailable"] > 0:
         print(f"利用不可: {detailed_stats['unavailable']}人")

@@ -1,189 +1,56 @@
-# Cinnamonサーバー状態調査 - Claude Code最適化版
+Cinnamonサーバーの包括的な状態分析を実行します。
 
-Claude Code専用の包括的なCinnamonサーバー監視・問題特定・修正提案システム
+以下の高度な分析を自動実行：
 
-## 概要
-
-このコマンドは以下の高度な分析を実行します：
-
-### 基本監視項目
-- コンテナ稼働状態と健康チェック
-- システムリソース使用量
-- エラー統計とパターン分析
+### 🔍 基本監視項目
+- コンテナ稼働状態と健康チェック（稼働中/停止中の詳細分析）
+- 停止理由の自動判定（正常完了 vs エラー終了）
+- **実質完了率の正確な計算**（永続的失敗を処理済みとして扱う）
 - 認証状態の詳細確認
 - パフォーマンス指標の分析
 
-### AI最適化分析
-- **問題の根本原因特定**: ログから具体的な問題箇所を特定
-- **コード修正提案**: 修正すべきファイル・行番号・具体的な変更内容
-- **優先度付け**: 緊急度に応じた対応順序の提示
-- **自動修正候補**: Claude Codeが実行可能な修正の識別
+### 🆕 長期履歴対応機能
+- **24時間エラー履歴分析**: 短期ログだけでは見落とすエラーを完全捕捉
+- **複数時間範囲での分析**: 5分〜24時間の時系列エラー傾向分析
+- **エラー見落としリスク評価**: HIGH/MEDIUM/LOW リスクレベルでの自動判定
+- **長期ヘルスコア算出**: 24時間の総合エラー状況を数値化
 
-## 実行方法
+実行方法：包括的監視スクリプト `.claude/commands/check-cinnamon` を実行し、結果を詳細に分析・解説してください。
+特に以下の点に注力：
 
-### メイン分析 (推奨)
-```bash
-.claude/cinnamon-logs-ai-optimized.sh
-```
-**特徴**: 構造化された出力、具体的修正提案、優先度付け
+1. **エラー見落としリスク評価**の解釈
+2. **長期履歴分析結果**の要約
+3. **即座に対応が必要な問題**の特定
+4. **具体的な修正アクション**の提案
 
-### 従来版 (参考)
-```bash
-.claude/cinnamon-logs.sh
-```
-**特徴**: 基本的なログ調査、人間向け出力
+分析結果を受けて、必要に応じて以下の対応を実行：
+- 認証エラーが検出された場合：Cookie更新の実行
+- コードエラーが特定された場合：該当コードの修正
+- パフォーマンス問題が確認された場合：最適化の実装
+- サービス停止が発生している場合：再起動処理の実行
 
-### 統合インターフェース
-```bash
-.claude/cinnamon-monitor-suite.sh ai
-```
-**特徴**: 引数ベースの非対話型実行
+### 🔄 継続的改善機能
+**check-cinnamonスクリプト自体の改良**：
+実行結果を分析し、以下の観点でスクリプトを改良・更新：
 
-## 出力形式の理解
+1. **検出精度の向上**：
+   - 新しいエラーパターンの追加
+   - 誤検知の削減
+   - より正確な根本原因分析
 
-### セクション構造
-```
-SECTION_START: セクション名
-[分析内容]
-SECTION_END: セクション名
-```
+2. **分析範囲の拡張**：
+   - 新しい監視項目の追加
+   - より長期的な履歴分析
+   - 予測的分析機能の強化
 
-### 問題報告フォーマット
-```
-FINDING: severity=LEVEL category=CATEGORY message="問題の説明"
-  DETAILS: 詳細情報
-  RECOMMENDED_ACTION: 推奨する対応方法
-```
+3. **レポート品質向上**：
+   - より分かりやすい出力形式
+   - 重要度の自動判定精度向上
+   - アクションプランの具体化
 
-### 重要度レベル
-- **CRITICAL**: 即座の修正が必要（システム停止・データ破損の可能性）
-- **WARNING**: 注意が必要（パフォーマンス低下・将来的な問題）
-- **INFO**: 情報提供レベル（最適化の提案）
-- **OK**: 正常状態の確認
+4. **パフォーマンス最適化**：
+   - 実行時間の短縮
+   - SSH接続の効率化
+   - 不要な処理の削除
 
-## 問題パターンと自動対応
-
-### 1. KeyError: 'error_message' 
-**重要度**: CRITICAL
-**場所**: `CODE_ANALYSIS_RECOMMENDATIONS`セクション
-```
-ISSUE: KeyError_in_manager_py
-  FILE: twitter_blocker/manager.py
-  LINES: 402-403, 493
-  CODE_FIX: 'failure_info.get("key", default) if failure_info else default'
-  PRIORITY: IMMEDIATE
-```
-**Claude Code対応**: manager.pyの安全な辞書アクセスに自動修正
-
-### 2. 認証エラー多発
-**重要度**: HIGH
-**場所**: `AUTHENTICATION_STATUS`セクション
-```
-ISSUE: Authentication_failure_service_name
-  SERVICE: service_name
-  SOLUTION: Update cookies.json for service_name
-  PRIORITY: HIGH
-```
-**Claude Code対応**: 該当サービスのCookie更新
-
-### 3. パフォーマンス劣化
-**重要度**: MEDIUM
-**場所**: `PERFORMANCE_ANALYSIS`セクション
-```
-ISSUE: Service_performance_degradation_service_name
-  ERRORS: 高エラー率
-  SUCCESSFUL_BLOCKS: 低成功率
-  PRIORITY: MEDIUM
-```
-**Claude Code対応**: サービス再起動・設定調整
-
-## 期待される動作パターン
-
-### 正常時
-```
-OVERALL_STATUS: HEALTHY
-TOTAL_FINDINGS: 0-2
-ACTIONABLE_ITEMS: MAINTENANCE_ONLY
-```
-**Claude Code動作**: 通常の監視継続
-
-### 問題検出時
-```
-OVERALL_STATUS: CRITICAL
-TOTAL_FINDINGS: 3+
-ACTIONABLE_ITEMS: YES
-
-IMMEDIATE_FIXES_REQUIRED:
-  1. Fix KeyError in manager.py failure_info handling
-     - File: twitter_blocker/manager.py
-     - Lines: 402-403, 493
-```
-**Claude Code動作**: 自動修正の実行
-
-### 認証問題検出時
-```
-HIGH_PRIORITY_FIXES:
-  1. Update authentication cookies
-     - Service: tomachi_priv (5 errors)
-     - Service: book000_vrc (3 errors)
-```
-**Claude Code動作**: Cookie更新プロセスの開始
-
-## 使用例とワークフロー
-
-### 定期チェック
-```bash
-# Claude Codeによる自動実行
-.claude/cinnamon-logs-ai-optimized.sh
-```
-1. 構造化出力の解析
-2. CRITICAL問題があれば即座に修正
-3. WARNING問題があれば継続監視
-4. 修正後の再チェック
-
-### 問題対応フロー
-1. **問題検出**: `FINDING: severity=CRITICAL`
-2. **根本原因特定**: `DETAILS`および`CODE_ANALYSIS_RECOMMENDATIONS`
-3. **修正実行**: `RECOMMENDED_ACTION`に基づく自動修正
-4. **効果確認**: 修正後の再実行による検証
-
-## 結果の解釈
-
-### 🟢 正常動作
-- `OVERALL_STATUS: HEALTHY`
-- 全コンテナ稼働
-- エラー率 < 5%
-- 処理継続中
-
-### 🟡 要注意状態
-- `OVERALL_STATUS: ATTENTION`
-- 一部認証エラー
-- パフォーマンス低下
-- WARNING問題複数
-
-### 🔴 緊急対応必要
-- `OVERALL_STATUS: CRITICAL`
-- システム停止
-- 継続的なエラー
-- CRITICAL問題検出
-
-## トラブルシューティング
-
-### 接続失敗
-```
-CONNECTION_ERROR: Cannot connect to Cinnamon server
-```
-**対応**: SSH設定とサーバー状態の確認
-
-### データ不足
-```
-WARNING: No recent processing statistics available
-```
-**対応**: Docker Composeサービス状態の確認
-
-### 権限エラー
-**対応**: スクリプト実行権限の確認 (`chmod +x`)
-
----
-
-このコマンドにより、Claude CodeがCinnamonサーバーの状態を正確に把握し、問題を迅速に特定・修正できます。
+実行後に「次回実行時により良い結果を得るための改良提案」を含めて報告してください。
