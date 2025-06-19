@@ -92,6 +92,15 @@ python3 -m twitter_blocker --debug --test-user example_user
 - `--test-user SCREEN_NAME` - 特定のユーザーのみテスト（デバッグ用）
 - `--debug-errors` - 失敗したエラーメッセージのサンプルを表示（デバッグ用）
 
+### 🔒 拡張ヘッダー機能（セキュリティ向上）
+
+- `--disable-header-enhancement` - 拡張ヘッダー生成を無効化（緊急時用）
+- `--enable-forwarded-for` - x-xp-forwarded-forヘッダーの生成を有効化（試験的機能）
+
+**拡張ヘッダーの詳細:**
+- **x-client-transaction-id**: 動的トランザクションID（デフォルト有効）
+- **x-xp-forwarded-for**: 日本主要ISP範囲のIP生成（NTT/KDDI/SoftBank/IIJ/So-net、オプション機能）
+
 **デバッグ機能の使用例:**
 
 ```bash
@@ -103,6 +112,9 @@ python3 -m twitter_blocker --debug-errors
 
 # デバッグモードで本格実行
 python3 -m twitter_blocker --all --debug --max-users 10
+
+# 拡張ヘッダー機能のテスト
+python3 -m twitter_blocker --test-user "username" --debug --enable-forwarded-for
 ```
 
 ### ファイル・ディレクトリ指定
