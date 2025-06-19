@@ -3,6 +3,7 @@ Twitter API アクセス管理モジュール
 """
 
 import json
+import random
 import time
 from datetime import datetime
 from pathlib import Path
@@ -12,6 +13,82 @@ import pytz
 import requests
 
 from .config import CookieManager
+
+
+class HeaderEnhancer:
+    """Twitter API用の拡張ヘッダー生成クラス"""
+    
+    def __init__(self, enable_forwarded_for: bool = False):
+        """
+        拡張ヘッダー生成機能を初期化
+        
+        Args:
+            enable_forwarded_for: x-xp-forwarded-forヘッダーの生成を有効にするか
+        """
+        self.enable_forwarded_for = enable_forwarded_for
+        self._transaction_counter = random.randint(1000, 9999)
+        self._session_ip = self._generate_session_ip() if enable_forwarded_for else None
+        
+    def get_transaction_id(self) -> str:
+        """
+        動的なtransaction ID生成（リクエスト毎にインクリメント）
+        
+        Returns:
+            一意のtransaction ID文字列
+        """
+        self._transaction_counter += 1
+        return str(self._transaction_counter)
+    
+    def get_forwarded_for(self) -> Optional[str]:
+        """
+        セッション固定IPの取得
+        
+        Returns:
+            生成されたIPアドレス文字列、または無効時はNone
+        """
+        return self._session_ip if self.enable_forwarded_for else None
+    
+    def _generate_session_ip(self) -> str:
+        """
+        適切なIP範囲からランダムIPを生成（セッション中は固定）
+        
+        Returns:
+            日本のISP範囲を模倣したIPアドレス
+        """
+        # 日本の主要ISP範囲を模倣
+        ip_ranges = [
+            (126, 0, 0, 1, 126, 255, 255, 254),      # NTT Communications
+            (202, 32, 0, 1, 202, 47, 255, 254),      # KDDI
+            (210, 128, 0, 1, 210, 255, 255, 254),    # SoftBank
+            (219, 96, 0, 1, 219, 127, 255, 254),     # IIJ
+            (61, 192, 0, 1, 61, 207, 255, 254),      # So-net
+        ]
+        
+        start_a, start_b, start_c, start_d, end_a, end_b, end_c, end_d = random.choice(ip_ranges)
+        
+        a = random.randint(start_a, end_a)
+        b = random.randint(start_b, end_b)
+        c = random.randint(start_c, end_c)
+        d = random.randint(start_d, end_d)
+        
+        return f"{a}.{b}.{c}.{d}"
+    
+    def get_enhanced_headers(self) -> Dict[str, str]:
+        """
+        拡張ヘッダーの辞書を取得
+        
+        Returns:
+            拡張ヘッダーの辞書
+        """
+        headers = {
+            "x-client-transaction-id": self.get_transaction_id()
+        }
+        
+        forwarded_for = self.get_forwarded_for()
+        if forwarded_for:
+            headers["x-xp-forwarded-for"] = forwarded_for
+            
+        return headers
 
 
 class TwitterAPI:
@@ -34,11 +111,24 @@ class TwitterAPI:
     # REST APIエンドポイント
     BLOCKS_CREATE_ENDPOINT = "https://x.com/i/api/1.1/blocks/create.json"
 
-    def __init__(self, cookie_manager: CookieManager, cache_dir: str = "/data/cache", debug_mode: bool = False):
+    def __init__(self, cookie_manager: CookieManager, cache_dir: str = "/data/cache", 
+                 debug_mode: bool = False, enable_header_enhancement: bool = True,
+                 enable_forwarded_for: bool = False):
         self.cookie_manager = cookie_manager
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.debug_mode = debug_mode
+        self.enable_header_enhancement = enable_header_enhancement
+        
+        # ヘッダー拡張機能の初期化
+        if enable_header_enhancement:
+            self.header_enhancer = HeaderEnhancer(enable_forwarded_for=enable_forwarded_for)
+            if debug_mode:
+                print(f"🔧 Header enhancement enabled (forwarded_for: {enable_forwarded_for})")
+        else:
+            self.header_enhancer = None
+            if debug_mode:
+                print("🔧 Header enhancement disabled")
         
         # キャッシュ構造
         self.lookups_cache_dir = self.cache_dir / "lookups"  # screen_name -> user_id マッピング用（共有）
@@ -670,12 +760,23 @@ class TwitterAPI:
             "sec-fetch-mode": "cors",
             "sec-fetch-site": "same-origin",
             "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36",
-            "x-client-transaction-id": "0",
             "x-csrf-token": csrf_token,
             "x-twitter-active-user": "yes",
             "x-twitter-auth-type": "OAuth2Session",
             "x-twitter-client-language": "ja",
         }
+
+        # 拡張ヘッダーの追加
+        if self.header_enhancer:
+            enhanced_headers = self.header_enhancer.get_enhanced_headers()
+            headers.update(enhanced_headers)
+            
+            # デバッグ情報の出力
+            if self.debug_mode:
+                self._log_enhanced_headers(enhanced_headers, "GraphQL")
+        else:
+            # 拡張ヘッダー無効時は従来の固定値を使用
+            headers["x-client-transaction-id"] = "0"
 
         # auth_tokenが存在する場合のみヘッダーを追加
         if auth_token:
@@ -687,7 +788,7 @@ class TwitterAPI:
         """REST API用のヘッダーを構築"""
         csrf_token = cookies.get("ct0", "")
 
-        return {
+        headers = {
             "authority": "x.com",
             "accept": "*/*",
             "accept-language": "ja,en;q=0.9",
@@ -708,6 +809,26 @@ class TwitterAPI:
             "x-twitter-auth-type": "OAuth2Session",
             "x-twitter-client-language": "ja",
         }
+
+        # 拡張ヘッダーの追加
+        if self.header_enhancer:
+            enhanced_headers = self.header_enhancer.get_enhanced_headers()
+            headers.update(enhanced_headers)
+            
+            # デバッグ情報の出力
+            if self.debug_mode:
+                self._log_enhanced_headers(enhanced_headers, "REST")
+
+        return headers
+
+    def _log_enhanced_headers(self, enhanced_headers: Dict[str, str], endpoint_type: str):
+        """拡張ヘッダーのデバッグログ出力"""
+        print(f"\n[ENHANCED HEADERS - {endpoint_type}]")
+        for key, value in enhanced_headers.items():
+            if key == "x-xp-forwarded-for":
+                print(f"  {key}: {value}")
+            else:
+                print(f"  {key}: {value}")
 
     def _get_graphql_features(self) -> Dict[str, bool]:
         """GraphQL API用のフィーチャーフラグを取得"""
@@ -793,6 +914,7 @@ class TwitterAPI:
             # ステータスコードと基本情報
             print(f"\n[API Response - {method_name}] {identifier}")
             print(f"  Status Code: {response.status_code}")
+            print(f"  Debug Mode: {self.debug_mode}")  # デバッグモード状態を明示
             
             # レートリミット情報
             if hasattr(response, 'headers'):
@@ -807,8 +929,8 @@ class TwitterAPI:
                         reset_time = datetime.fromtimestamp(int(rate_reset), tz=tokyo_tz)
                         print(f"  Reset Time: {reset_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
                 
-                # デバッグモードの場合は追加情報を表示
-                if self.debug_mode:
+                # デバッグモードまたは403エラーの場合は追加情報を表示
+                if self.debug_mode or response.status_code == 403:
                     print(f"  Content-Type: {response.headers.get('content-type', 'N/A')}")
                     print(f"  Content-Length: {response.headers.get('content-length', 'N/A')}")
                     # 403エラーの場合は全ヘッダーを表示
@@ -818,6 +940,9 @@ class TwitterAPI:
                             print(f"  {key}: {value}")
         except Exception as e:
             print(f"  ログ出力エラー: {e}")
+            # デバッグ用：例外の詳細も表示
+            import traceback
+            print(f"  詳細エラー: {traceback.format_exc()}")
 
         # エラー時の詳細情報
         if hasattr(response, 'status_code') and response.status_code >= 400:
@@ -831,10 +956,11 @@ class TwitterAPI:
                 else:
                     # JSON形式だがerrorsフィールドがない場合
                     print(f"  レスポンスJSON: {json.dumps(error_data, ensure_ascii=False, indent=2)[:500]}")
-            except:
+            except Exception as json_error:
+                print(f"  JSON解析エラー: {json_error}")
                 if hasattr(response, 'text'):
-                    # 403エラーの場合は全文表示
-                    if response.status_code == 403:
+                    # 403エラーまたはデバッグモードの場合は全文表示
+                    if response.status_code == 403 or self.debug_mode:
                         print(f"  レスポンステキスト全文:")
                         print(f"  {response.text}")
                     else:
