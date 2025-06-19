@@ -93,10 +93,12 @@ python3 -m twitter_blocker --test-user "username" --debug --enable-forwarded-for
 python3 -m twitter_blocker --all --disable-header-enhancement  # 緊急時無効化
 
 # 本番環境（Cinnamonサーバー）
-/project:check-cinnamon                    # サーバー状態調査
+.claude/commands/check-cinnamon            # 🆕 包括的サーバー状態調査（推奨）
+/project:check-cinnamon                    # 従来のサーバー状態調査
 /project:restart-service [service_name]    # サービス再起動
 
-# 新・監視ツールスイート v2.0 (Claude Code最適化)
+# 監視ツールスイート v3.0 (Claude Code最適化)
+.claude/commands/check-cinnamon            # 🆕 詳細分析・正確な完了率表示
 .claude/cinnamon-monitor-suite.sh [mode]   # 統合監視インターフェース (非対話型)
 .claude/cinnamon-logs-ai-optimized.sh      # AI最適化版・構造化出力
 .claude/cinnamon-logs.sh                   # 基本版 (参考用)
@@ -104,33 +106,33 @@ python3 -m twitter_blocker --all --disable-header-enhancement  # 緊急時無効
 
 ## 📊 Cinnamonサーバー監視ツールスイート
 
-### 統合監視システム
+### 🆕 v3.0 包括的監視システム
 ```bash
-# メインインターフェース（推奨）
-.claude/cinnamon-monitor-suite.sh
-# インタラクティブメニューで全ツールにアクセス
+# 新・包括的分析コマンド（最推奨）
+.claude/commands/check-cinnamon
+# 永続的失敗を含む正確な完了率表示・詳細なコンテナ分析・即座のアクション提示
 ```
 
-### 個別ツール詳細
+### 従来監視システム
 ```bash
-# 🤖 AI最適化版（メイン）
+# 統合インターフェース
+.claude/cinnamon-monitor-suite.sh
+# インタラクティブメニューで全ツールにアクセス
+
+# 🤖 AI最適化版（技術的詳細）
 .claude/cinnamon-logs-ai-optimized.sh
 # Claude Code向け構造化出力・問題根本原因特定・修正提案
 
 # 🔍 基本監視（参考用）
 .claude/cinnamon-logs.sh
 # 従来版・人間向け出力
-
-# 🎛️ 統合インターフェース
-.claude/cinnamon-monitor-suite.sh [mode]
-# 引数ベース非対話型・複数分析手法への統一アクセス
-# 例: .claude/cinnamon-monitor-suite.sh ai
 ```
 
 ### 監視ツール使い分けガイド
 | 状況 | 推奨ツール | 実行方法 |
 |------|------------|----------|
-| **Claude Code標準** | AI最適化版 | `cinnamon-logs-ai-optimized.sh` |
+| **🆕 包括的状態確認** | **新・check-cinnamon** | **`check-cinnamon`** |
+| **完了率の正確な把握** | **新・check-cinnamon** | **`check-cinnamon`** |
 | **問題詳細調査** | AI最適化版 | `cinnamon-logs-ai-optimized.sh` |
 | **基本チェック** | 統合インターフェース | `cinnamon-monitor-suite.sh basic` |
 | **緊急対応** | 統合インターフェース | `cinnamon-monitor-suite.sh emergency` |
