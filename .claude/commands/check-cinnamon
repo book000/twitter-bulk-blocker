@@ -216,9 +216,193 @@ else
     echo "  - システムは正常に動作中または正常完了済みです"
 fi
 
+# 7. パフォーマンス分析
+echo "⚡ PERFORMANCE ANALYSIS"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# 処理速度の分析
+echo "📈 Processing Speed Analysis:"
+TOTAL_BLOCKED=0
+TOTAL_TARGETS=0
+for container in $STOPPED_CONTAINERS $RUNNING_CONTAINERS; do
+    if [ -n "$container" ]; then
+        SERVICE_NAME=$(echo $container | sed 's/bulk-block-users-//' | sed 's/-1$//')
+        BLOCKED=$(ssh Cinnamon "docker logs $container" | grep "ブロック済み" | tail -1 | grep -o '[0-9,]*人' | tr -d ',人' | head -1)
+        TARGETS=$(ssh Cinnamon "docker logs $container" | grep "全対象ユーザー" | tail -1 | grep -o '[0-9,]*人' | tr -d ',人' | head -1)
+        
+        if [ -n "$BLOCKED" ] && [ -n "$TARGETS" ]; then
+            TOTAL_BLOCKED=$((TOTAL_BLOCKED + BLOCKED))
+            TOTAL_TARGETS=$((TOTAL_TARGETS + TARGETS))
+            COMPLETION_RATE=$(echo "scale=1; $BLOCKED * 100 / $TARGETS" | bc 2>/dev/null || echo "0")
+            echo "  - $SERVICE_NAME: $BLOCKED/$TARGETS (${COMPLETION_RATE}%)"
+        fi
+    fi
+done
+
+if [ "$TOTAL_TARGETS" -gt 0 ]; then
+    OVERALL_COMPLETION=$(echo "scale=1; $TOTAL_BLOCKED * 100 / $TOTAL_TARGETS" | bc 2>/dev/null || echo "0")
+    echo "  - 全体進捗: $TOTAL_BLOCKED/$TOTAL_TARGETS (${OVERALL_COMPLETION}%)"
+fi
+
+# 8. エラー分析とパターン特定
 echo
-echo "=== CHECK COMPLETE ==="
+echo "🔍 ERROR PATTERN ANALYSIS"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# 認証エラーパターンの詳細分析
+echo "🔐 Authentication Error Patterns:"
+AUTH_PATTERN_ANALYSIS=$(ssh Cinnamon "docker logs --since '1h' \$(docker ps -aq --filter 'name=bulk-block-users')" 2>/dev/null | grep -i "認証エラー\|authentication\|cookie" | head -10)
+if [ -n "$AUTH_PATTERN_ANALYSIS" ]; then
+    echo "$AUTH_PATTERN_ANALYSIS" | sed 's/^/  /'
+else
+    echo "  - No recent authentication errors in last hour"
+fi
+
+# APIエラーパターンの分析
+echo "🌐 API Error Patterns:"
+API_ERRORS=$(ssh Cinnamon "docker logs --since '30m' \$(docker ps -aq --filter 'name=bulk-block-users')" 2>/dev/null | grep -E "Status Code: [45][0-9][0-9]|エラー|失敗" | tail -5)
+if [ -n "$API_ERRORS" ]; then
+    echo "$API_ERRORS" | sed 's/^/  /'
+else
+    echo "  - No recent API errors in last 30 minutes"
+fi
+
+# 9. リソース使用状況
+echo
+echo "💾 RESOURCE UTILIZATION"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# Cinnamonサーバーのリソース状況
+echo "🖥️ Server Resource Status:"
+SERVER_STATS=$(ssh Cinnamon "uptime && free -h && df -h /" 2>/dev/null)
+if [ -n "$SERVER_STATS" ]; then
+    echo "$SERVER_STATS" | sed 's/^/  /'
+else
+    echo "  - Unable to retrieve server statistics"
+fi
+
+# 10. 時系列分析
+echo
+echo "📊 TIME-SERIES ANALYSIS"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+echo "⏰ Processing Timeline (last 2 hours):"
+# 過去2時間の処理ログから進捗を抽出
+for container in $STOPPED_CONTAINERS $RUNNING_CONTAINERS; do
+    if [ -n "$container" ]; then
+        SERVICE_NAME=$(echo $container | sed 's/bulk-block-users-//' | sed 's/-1$//')
+        TIMELINE=$(ssh Cinnamon "docker logs --since '2h' $container" 2>/dev/null | grep -E "進捗|完了|ブロック済み" | tail -3)
+        if [ -n "$TIMELINE" ]; then
+            echo "  📈 $SERVICE_NAME:"
+            echo "$TIMELINE" | sed 's/^/    /'
+        fi
+    fi
+done
+
+# 11. 予測分析
+echo
+echo "🔮 PREDICTIVE ANALYSIS"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+echo "📈 Completion Predictions:"
+for container in $RUNNING_CONTAINERS; do
+    if [ -n "$container" ]; then
+        SERVICE_NAME=$(echo $container | sed 's/bulk-block-users-//' | sed 's/-1$//')
+        
+        # 残り未処理ユーザー数を取得
+        REMAINING=$(ssh Cinnamon "docker logs $container" | grep "残り未処理" | tail -1 | grep -o '[0-9,]*人' | tr -d ',人')
+        
+        if [ -n "$REMAINING" ] && [ "$REMAINING" -gt 0 ]; then
+            # 簡単な処理速度推定（10分で50ユーザー処理と仮定）
+            ESTIMATED_HOURS=$(echo "scale=1; $REMAINING / 300" | bc 2>/dev/null || echo "不明")
+            echo "  - $SERVICE_NAME: 残り${REMAINING}人 → 推定完了まで約${ESTIMATED_HOURS}時間"
+        else
+            echo "  - $SERVICE_NAME: 処理完了済み"
+        fi
+    fi
+done
+
+# 12. 健康度スコア算出
+echo
+echo "🏥 SYSTEM HEALTH SCORE"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+HEALTH_SCORE=100
+HEALTH_ISSUES=""
+
+# 認証エラーによる減点
+if [ "$AUTH_ERRORS" -gt 0 ]; then
+    HEALTH_SCORE=$((HEALTH_SCORE - 20))
+    HEALTH_ISSUES="${HEALTH_ISSUES}\n  - 認証エラーあり (-20点)"
+fi
+
+# エラー停止コンテナによる減点
+ERROR_COUNT=$(echo "$ERROR_CONTAINERS" | wc -w)
+if [ "$ERROR_COUNT" -gt 0 ]; then
+    HEALTH_SCORE=$((HEALTH_SCORE - ERROR_COUNT * 15))
+    HEALTH_ISSUES="${HEALTH_ISSUES}\n  - エラー停止サービス: ${ERROR_COUNT}個 (-$((ERROR_COUNT * 15))点)"
+fi
+
+# 進捗率による評価
+if [ "$TOTAL_TARGETS" -gt 0 ]; then
+    OVERALL_COMPLETION_INT=$(echo "$OVERALL_COMPLETION" | cut -d. -f1)
+    if [ "$OVERALL_COMPLETION_INT" -lt 50 ]; then
+        HEALTH_SCORE=$((HEALTH_SCORE - 10))
+        HEALTH_ISSUES="${HEALTH_ISSUES}\n  - 全体進捗率低下 (-10点)"
+    fi
+fi
+
+echo "🎯 Overall Health Score: ${HEALTH_SCORE}/100"
+if [ -n "$HEALTH_ISSUES" ]; then
+    echo "📋 Health Issues:"
+    echo -e "$HEALTH_ISSUES"
+fi
+
+# 健康度に基づく総合判定
+if [ "$HEALTH_SCORE" -ge 80 ]; then
+    echo "✅ System Status: EXCELLENT"
+elif [ "$HEALTH_SCORE" -ge 60 ]; then
+    echo "⚠️ System Status: GOOD (要監視)"
+elif [ "$HEALTH_SCORE" -ge 40 ]; then
+    echo "🔶 System Status: FAIR (要注意)"
+else
+    echo "🚨 System Status: POOR (要対応)"
+fi
+
+# 13. 最適化提案
+echo
+echo "💡 OPTIMIZATION RECOMMENDATIONS"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+echo "🔧 Specific Recommendations:"
+
+# エラー停止サービスへの対応提案
+if [ -n "$ERROR_CONTAINERS" ]; then
+    echo "  1. 🔴 Immediate Actions for Error Containers:"
+    for error_container in $ERROR_CONTAINERS; do
+        SERVICE_NAME=$(echo $error_container | sed 's/bulk-block-users-//' | sed 's/-1$//')
+        echo "     - $SERVICE_NAME: Cookie更新とサービス再起動を推奨"
+    done
+fi
+
+# パフォーマンス改善提案
+if [ "$TOTAL_TARGETS" -gt 0 ] && [ "$OVERALL_COMPLETION_INT" -lt 80 ]; then
+    echo "  2. ⚡ Performance Improvements:"
+    echo "     - 並列処理数の増加を検討"
+    echo "     - バッチサイズの最適化"
+    echo "     - レート制限の調整"
+fi
+
+# 監視強化の提案
+echo "  3. 📊 Enhanced Monitoring:"
+echo "     - 定期的なCookie有効性チェック"
+echo "     - 自動フェイルオーバー機能の実装"
+echo "     - アラート閾値の設定"
+
+echo
+echo "=== COMPREHENSIVE CHECK COMPLETE ==="
 echo "Next check recommended: $(date -d '+5 minutes' '+%H:%M')"
+echo "Health Score: ${HEALTH_SCORE}/100"
 echo
 echo "📋 For detailed technical analysis, run:"
 echo "  .claude/cinnamon-logs-ai-optimized.sh"
