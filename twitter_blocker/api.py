@@ -1293,8 +1293,37 @@ class TwitterAPI:
             # ログインユーザーIDのキャッシュをクリア
             self._login_user_id = None
             
-            # クッキーを再読み込み
+            # クッキーファイルの更新を待機
             try:
+                # 現在のクッキーファイルのタイムスタンプを取得
+                cookie_path = Path(self.cookie_manager.cookies_file)
+                if cookie_path.exists():
+                    original_mtime = cookie_path.stat().st_mtime
+                    print(f"現在のCookieファイル更新時刻: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(original_mtime))}")
+                    print("Cookieファイルの更新を待機しています...")
+                    
+                    # 最大1時間、ファイルの更新を待機
+                    start_time = time.time()
+                    timeout = 3600  # 1時間（3600秒）のタイムアウト
+                    check_interval = 1.0  # 1秒ごとにチェック
+                    
+                    while time.time() - start_time < timeout:
+                        current_mtime = cookie_path.stat().st_mtime
+                        if current_mtime > original_mtime:
+                            # ファイルが更新された
+                            print(f"Cookieファイルが更新されました: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(current_mtime))}")
+                            time.sleep(1)  # ファイル書き込み完了を待つため少し待機
+                            break
+                        
+                        # 進捗表示（10秒ごと）
+                        elapsed = int(time.time() - start_time)
+                        if elapsed > 0 and elapsed % 10 == 0:
+                            print(f"  待機中... ({elapsed}秒経過 / 最大{timeout}秒)")
+                        
+                        time.sleep(check_interval)
+                    else:
+                        print(f"警告: {timeout/60:.0f}分待機しましたが、Cookieファイルが更新されませんでした")
+                
                 # クッキーキャッシュをクリア
                 self.cookie_manager.clear_cache()
                 # 少し待機してから再試行
