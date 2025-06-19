@@ -21,11 +21,19 @@ class BulkBlockManager:
         db_file: str = "block_history.db",
         cache_dir: str = "/data/cache",
         debug_mode: bool = False,
+        enable_header_enhancement: bool = True,
+        enable_forwarded_for: bool = False,
     ):
         self.config_manager = ConfigManager(users_file)
         self.cookie_manager = CookieManager(cookies_file)
         self.database = DatabaseManager(db_file)
-        self.api = TwitterAPI(self.cookie_manager, cache_dir, debug_mode)
+        self.api = TwitterAPI(
+            self.cookie_manager, 
+            cache_dir, 
+            debug_mode, 
+            enable_header_enhancement, 
+            enable_forwarded_for
+        )
         self.retry_manager = RetryManager()
 
     def load_target_users(self) -> List[str]:

@@ -29,6 +29,33 @@ FEATURES = {
     "responsive_web_graphql_exclude_directive_enabled": True,
     # 他約10個...定期的にTwitterの仕様変更をチェック
 }
+
+# 拡張ヘッダー（Issue #38対応）
+class HeaderEnhancer:
+    """Twitter API用の拡張ヘッダー生成クラス"""
+    
+    def __init__(self, enable_forwarded_for: bool = False):
+        self.enable_forwarded_for = enable_forwarded_for
+        self._transaction_counter = random.randint(1000, 9999)
+        self._session_ip = self._generate_session_ip() if enable_forwarded_for else None
+    
+    def get_enhanced_headers(self) -> Dict[str, str]:
+        """拡張ヘッダーを取得"""
+        headers = {
+            "x-client-transaction-id": str(self._transaction_counter)
+        }
+        
+        if self.enable_forwarded_for and self._session_ip:
+            headers["x-xp-forwarded-for"] = self._session_ip
+            
+        self._transaction_counter += 1
+        return headers
+
+# Twitter APIでの使用
+api = TwitterAPI(
+    enable_header_enhancement=True,    # x-client-transaction-id有効
+    enable_forwarded_for=False         # x-xp-forwarded-for無効（デフォルト）
+)
 ```
 
 ## レート制限管理（精密）

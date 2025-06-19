@@ -45,6 +45,18 @@ def main():
     parser.add_argument(
         "--delay", type=float, default=1.0, help="リクエスト間隔（秒、デフォルト: 1.0）"
     )
+    
+    # 拡張ヘッダー関連オプション
+    parser.add_argument(
+        "--disable-header-enhancement", 
+        action="store_true", 
+        help="拡張ヘッダー生成を無効化（x-client-transaction-id等）"
+    )
+    parser.add_argument(
+        "--enable-forwarded-for", 
+        action="store_true", 
+        help="x-xp-forwarded-forヘッダーの生成を有効化（試験的機能）"
+    )
 
     # ファイルパス指定オプション
     parser.add_argument(
@@ -99,9 +111,24 @@ def main():
     print(f"  データベース: {args.db}")
     print()
 
+    # 拡張ヘッダー設定の処理
+    enable_header_enhancement = not args.disable_header_enhancement
+    enable_forwarded_for = args.enable_forwarded_for
+    
+    if args.debug and enable_header_enhancement:
+        print(f"🔧 拡張ヘッダー設定:")
+        print(f"  ヘッダー拡張: {'有効' if enable_header_enhancement else '無効'}")
+        print(f"  Forwarded-For: {'有効' if enable_forwarded_for else '無効'}")
+        print()
+
     manager = BulkBlockManager(
-        cookies_file=args.cookies, users_file=args.users_file, db_file=args.db, 
-        cache_dir=args.cache_dir, debug_mode=getattr(args, 'debug', False)
+        cookies_file=args.cookies, 
+        users_file=args.users_file, 
+        db_file=args.db, 
+        cache_dir=args.cache_dir, 
+        debug_mode=args.debug,
+        enable_header_enhancement=enable_header_enhancement,
+        enable_forwarded_for=enable_forwarded_for
     )
 
     # 統計表示

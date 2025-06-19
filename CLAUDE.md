@@ -88,6 +88,10 @@ python3 -m py_compile twitter_blocker/*.py  # 全品質チェック
 /analyze-performance database              # パフォーマンス分析
 /debug-issue "問題の説明"                    # 緊急デバッグ
 
+# 拡張ヘッダー機能テスト
+python3 -m twitter_blocker --test-user "username" --debug --enable-forwarded-for
+python3 -m twitter_blocker --all --disable-header-enhancement  # 緊急時無効化
+
 # 本番環境（Cinnamonサーバー）
 /project:check-cinnamon                    # サーバー状態調査
 /project:restart-service [service_name]    # サービス再起動
@@ -150,6 +154,11 @@ python3 -m py_compile twitter_blocker/*.py  # 全品質チェック
 - **最適バッチサイズ**: 50件
 - **キャッシュTTL**: 30日
 - **目標処理速度**: 50件/秒以上
+
+### 🔧 新機能: 拡張ヘッダー対応 (Issue #38)
+- **動的ヘッダー生成**: Twitter/Xアンチボットシステム対応
+- **段階的導入**: `--disable-header-enhancement`、`--enable-forwarded-for`オプション
+- **詳細**: `.claude/guides/api-patterns.md` 参照
 
 ---
 

@@ -238,6 +238,53 @@ def block_user_with_cache_update(self, user_id, screen_name):
     return result
 ```
 
+## 拡張ヘッダーパターン (Issue #38対応)
+
+### ヘッダー拡張の推奨使用方法
+```python
+# ✅ 推奨: 段階的有効化パターン
+
+class BulkBlockManager:
+    def __init__(self, cookies_file="cookies.json", users_file="users.json", 
+                 db_file="block_history.db", cache_dir="/data/cache", debug_mode=False,
+                 enable_header_enhancement=True, enable_forwarded_for=False):
+        """
+        enable_header_enhancement: x-client-transaction-id有効化（推奨：True）
+        enable_forwarded_for: x-xp-forwarded-for有効化（推奨：False、上級者向け）
+        """
+        self.cookie_manager = CookieManager(cookies_file)
+        self.api = TwitterAPI(
+            self.cookie_manager, cache_dir, debug_mode,
+            enable_header_enhancement, enable_forwarded_for
+        )
+
+# 本番環境での推奨設定
+manager = BulkBlockManager(
+    enable_header_enhancement=True,   # 低リスク機能は有効
+    enable_forwarded_for=False        # 高リスク機能は慎重に
+)
+
+# テスト・検証環境での高度設定
+test_manager = BulkBlockManager(
+    enable_header_enhancement=True,
+    enable_forwarded_for=True         # 検証時のみ有効化
+)
+```
+
+### コマンドライン使用パターン
+```bash
+# ✅ 推奨: 段階的テスト
+
+# Stage 1: 基本改善のみ（推奨）
+python3 -m twitter_blocker --all
+
+# Stage 2: 高度機能も有効化（上級者向け）
+python3 -m twitter_blocker --all --enable-forwarded-for
+
+# Stage 3: 問題発生時の緊急無効化
+python3 -m twitter_blocker --all --disable-header-enhancement
+```
+
 ## 非同期・並行処理パターン
 
 ### バッチ処理の並行実行
