@@ -93,10 +93,18 @@ python3 -m twitter_blocker --test-user "username" --debug --enable-forwarded-for
 python3 -m twitter_blocker --all --disable-header-enhancement  # 緊急時無効化
 
 # 本番環境（Cinnamonサーバー）
-/project:check-cinnamon                    # サーバー状態調査
-/project:restart-service [service_name]    # サービス再起動
+/project:check-cinnamon                    # サーバー包括的状態分析（長期履歴対応）
+/project:restart-service [service_name]    # サービス再起動（引数省略で全サービス）
+/project:debug-issue "問題の説明"           # 詳細問題調査とデバッグ
 
-# 監視ツールスイート v2.0 (Claude Code最適化) 
+# 開発・運用コマンド
+/project:check-api-status [target]         # API・キャッシュ状態確認
+/project:analyze-performance [target]      # パフォーマンス分析とボトルネック特定
+/project:optimize-batch [target]           # バッチ処理最適化
+/project:test-feature [feature_name]       # 機能テスト実行
+
+# 監視ツールスイート v2.1 (長期履歴対応)
+.claude/commands/check-cinnamon             # 包括的分析 (24時間エラー履歴対応)
 .claude/cinnamon-monitor-suite.sh [mode]   # 統合監視インターフェース (非対話型)
 .claude/cinnamon-logs-ai-optimized.sh      # AI最適化版・構造化出力
 .claude/cinnamon-logs.sh                   # 基本版 (参考用)
@@ -127,9 +135,12 @@ python3 -m twitter_blocker --all --disable-header-enhancement  # 緊急時無効
 # 例: .claude/cinnamon-monitor-suite.sh ai
 ```
 
-### 監視ツール使い分けガイド
+### 監視ツール使い分けガイド (v2.1対応)
 | 状況 | 推奨ツール | 実行方法 |
 |------|------------|----------|
+| **🆕 長期履歴分析** | 包括的分析 | `.claude/commands/check-cinnamon` |
+| **🔄 自己改善・最適化** | 包括的分析 | `.claude/commands/check-cinnamon` |
+| **エラー見落としリスク評価** | 包括的分析 | `.claude/commands/check-cinnamon` |
 | **Claude Code標準** | AI最適化版 | `cinnamon-logs-ai-optimized.sh` |
 | **問題詳細調査** | AI最適化版 | `cinnamon-logs-ai-optimized.sh` |
 | **基本チェック** | 統合インターフェース | `cinnamon-monitor-suite.sh basic` |
@@ -138,6 +149,10 @@ python3 -m twitter_blocker --all --disable-header-enhancement  # 緊急時無効
 
 ### Claude Code分析システム
 ```bash
+# 🔄 自己改善型包括分析（推奨）
+.claude/commands/check-cinnamon
+# 特徴: 24時間エラー履歴、実行メタデータ収集、自動改善提案
+
 # AI最適化版での問題特定・修正提案
 .claude/cinnamon-logs-ai-optimized.sh
 
@@ -146,6 +161,12 @@ python3 -m twitter_blocker --all --disable-header-enhancement  # 緊急時無効
 # ⚠️ WARNING: 注意が必要（認証エラー、パフォーマンス低下）
 # ℹ️ INFO: 情報提供レベル（最適化提案）
 # ✅ OK: 正常状態の確認
+
+# 🔄 自己改善機能
+# 📊 実行メタデータ収集: 性能指標、検出精度の自動記録
+# 📈 履歴トレンド分析: 過去実行との比較・改善傾向判定
+# 💡 自動改善提案: 具体的な最適化案の生成
+# 🚨 緊急改善検出: 重大な性能低下時の即座アラート
 ```
 
 ### 重要な数値
