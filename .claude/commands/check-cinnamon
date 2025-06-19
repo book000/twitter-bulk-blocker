@@ -116,7 +116,7 @@ if [ -n "$STOPPED_CONTAINERS" ]; then
         case $EXIT_CODE in
             0)
                 if [ -n "$COMPLETION_MSG" ]; then
-                    echo "    ✅ 正常完了 - 全ユーザー処理済み"
+                    echo "    ✅ 処理完了 - 全処理対象が完了（ブロック成功 + 技術的にブロック不可能なユーザー）"
                 else
                     echo "    ✅ 正常終了 - 処理対象完了"
                 fi
