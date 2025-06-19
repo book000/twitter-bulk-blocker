@@ -682,7 +682,23 @@ fi
 echo
 echo "=== COMPREHENSIVE CHECK COMPLETE (長期履歴対応版) ==="
 echo "Analysis timeframe: 24 hours (認証・API・ネットワークエラーの包括的分析)"
-echo "Next check recommended: $(date -d '+5 minutes' '+%H:%M')"
+
+# 適応的監視間隔の計算関数
+calculate_next_check_interval() {
+    local total_errors_24h=$1
+    local error_count=$2
+
+    if [ "$total_errors_24h" -gt 50 ] || [ "$error_count" -gt 0 ]; then
+        echo "5 minutes"  # 問題発生時は短間隔
+    elif [ "$total_errors_24h" -gt 10 ]; then
+        echo "10 minutes"  # 軽微な問題は中間隔
+    else
+        echo "30 minutes"  # 安定時は長間隔
+    fi
+}
+
+NEXT_CHECK_INTERVAL=$(calculate_next_check_interval "$TOTAL_ERRORS_24H" "$ERROR_COUNT")
+echo "Next check recommended: $(date -d "+$NEXT_CHECK_INTERVAL" '+%H:%M') (適応的間隔: $NEXT_CHECK_INTERVAL)"
 echo "Health Score: ${HEALTH_SCORE}/100"
 
 # エラー見落としリスク総合評価の表示

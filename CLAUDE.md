@@ -78,6 +78,23 @@ for user in users:
 ### 品質保証
 - `.claude/quality/testing-guide.md` - テスト戦略・モック実装・CI設定
 
+## 🔑 Cinnamonサーバー接続方法（重要）
+
+⚠️ **Claude Code使用時の必須注意事項**
+
+### ✅ 正しい接続方法
+```bash
+ssh Cinnamon  # 必ずこの形式を使用
+```
+
+### ❌ 間違った接続方法（絶対に使用禁止）
+```bash
+ssh ope@cinnamon.oimo.io         # ホスト名解決エラー
+ssh ope@183.90.238.206          # IP直接（タイムアウト）
+```
+
+📋 **詳細**: `.claude/cinnamon-connection.md` 参照
+
 ## クイックリファレンス
 
 ### よく使うコマンド
