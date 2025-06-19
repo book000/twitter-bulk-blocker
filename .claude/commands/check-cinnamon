@@ -38,37 +38,127 @@ else
 fi
 echo
 
-# 2. 停止理由の自動判定（正常完了 vs エラー終了）
-echo "🔍 STOPPED CONTAINER ANALYSIS (Exit Code分析)"
+# 2. 停止理由の詳細分析（各サービスの停止原因を徹底調査）
+echo "🔍 DETAILED CONTAINER STOP ANALYSIS"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 if [ -n "$STOPPED_CONTAINERS" ]; then
     for container in $STOPPED_CONTAINERS; do
-        echo "📋 Container: $container"
+        SERVICE_NAME=$(echo $container | sed 's/bulk-block-users-//' | sed 's/-1$//')
+        echo "📋 Service: $SERVICE_NAME ($container)"
         
         # 終了コード確認
         EXIT_CODE=$(ssh Cinnamon "docker inspect $container --format '{{.State.ExitCode}}'")
         echo "  Exit Code: $EXIT_CODE"
         
-        # 停止理由の自動判定
+        # 停止時刻の取得
+        STOP_TIME=$(ssh Cinnamon "docker inspect $container --format '{{.State.FinishedAt}}'" | cut -d'T' -f2 | cut -d'.' -f1)
+        echo "  Stopped At: $STOP_TIME JST"
+        
+        # 最後の20行のログから停止理由を詳細分析
+        echo "  🔍 Stop Reason Analysis:"
+        FULL_LOGS=$(ssh Cinnamon "docker logs --tail 20 $container" 2>/dev/null)
+        
+        # 認証エラーパターンの検出
+        AUTH_ERROR=$(echo "$FULL_LOGS" | grep -i "認証エラー\|authentication.*failed\|cookie.*無効\|cookie.*invalid" | tail -1)
+        if [ -n "$AUTH_ERROR" ]; then
+            echo "    • 🔑 認証エラー検出:"
+            echo "      - $AUTH_ERROR" | sed 's/^/        /'
+        fi
+        
+        # アカウントロックパターンの検出
+        ACCOUNT_LOCK=$(echo "$FULL_LOGS" | grep -i "アカウントロック\|account.*lock\|suspended" | tail -1)
+        if [ -n "$ACCOUNT_LOCK" ]; then
+            echo "    • 🚫 アカウントロック検出:"
+            echo "      - $ACCOUNT_LOCK" | sed 's/^/        /'
+        fi
+        
+        # レート制限エラーの検出
+        RATE_LIMIT=$(echo "$FULL_LOGS" | grep -i "rate.*limit\|too many request\|429" | tail -1)
+        if [ -n "$RATE_LIMIT" ]; then
+            echo "    • ⏰ レート制限エラー検出:"
+            echo "      - $RATE_LIMIT" | sed 's/^/        /'
+        fi
+        
+        # API応答エラーの検出
+        API_ERROR=$(echo "$FULL_LOGS" | grep -E "Status Code: [45][0-9][0-9]|HTTP.*[45][0-9][0-9]" | tail -1)
+        if [ -n "$API_ERROR" ]; then
+            echo "    • 🌐 API応答エラー検出:"
+            echo "      - $API_ERROR" | sed 's/^/        /'
+        fi
+        
+        # 完了メッセージの検出
+        COMPLETION_MSG=$(echo "$FULL_LOGS" | grep -i "処理完了\|完了\|全.*ユーザー.*処理" | tail -1)
+        if [ -n "$COMPLETION_MSG" ]; then
+            echo "    • ✅ 正常完了メッセージ:"
+            echo "      - $COMPLETION_MSG" | sed 's/^/        /'
+        fi
+        
+        # ネットワークエラーの検出
+        NETWORK_ERROR=$(echo "$FULL_LOGS" | grep -i "connection.*error\|network.*error\|timeout\|dns" | tail -1)
+        if [ -n "$NETWORK_ERROR" ]; then
+            echo "    • 🌐 ネットワークエラー検出:"
+            echo "      - $NETWORK_ERROR" | sed 's/^/        /'
+        fi
+        
+        # その他の重要なエラーメッセージ
+        OTHER_ERROR=$(echo "$FULL_LOGS" | grep -i "error\|エラー\|failed\|失敗" | grep -v "認証エラー\|authentication" | tail -2)
+        if [ -n "$OTHER_ERROR" ]; then
+            echo "    • ⚠️ その他のエラー:"
+            echo "$OTHER_ERROR" | sed 's/^/        - /'
+        fi
+        
+        # 停止理由の総合判定
+        echo "  📊 Stop Reason Summary:"
         case $EXIT_CODE in
             0)
-                echo "  Status: ✅ NORMAL_COMPLETION (正常完了)"
-                echo "  Reason: 処理対象ユーザー全て処理済み"
+                if [ -n "$COMPLETION_MSG" ]; then
+                    echo "    ✅ 正常完了 - 全ユーザー処理済み"
+                else
+                    echo "    ✅ 正常終了 - 処理対象完了"
+                fi
                 ;;
             1)
-                echo "  Status: 🔴 ERROR_TERMINATION (エラー終了)"
-                echo "  Reason: 認証失敗・アカウントロック等"
+                STOP_REASONS=()
+                [ -n "$AUTH_ERROR" ] && STOP_REASONS+=("認証エラー")
+                [ -n "$ACCOUNT_LOCK" ] && STOP_REASONS+=("アカウントロック")
+                [ -n "$RATE_LIMIT" ] && STOP_REASONS+=("レート制限")
+                [ -n "$API_ERROR" ] && STOP_REASONS+=("API応答エラー")
+                [ -n "$NETWORK_ERROR" ] && STOP_REASONS+=("ネットワークエラー")
+                
+                if [ ${#STOP_REASONS[@]} -gt 0 ]; then
+                    echo "    🔴 エラー終了 - $(IFS=', '; echo "${STOP_REASONS[*]}")"
+                else
+                    echo "    🔴 エラー終了 - 不明な原因（要詳細調査）"
+                fi
                 ;;
             *)
-                echo "  Status: ⚠️ UNKNOWN_EXIT (不明な終了)"
-                echo "  Reason: 調査が必要"
+                echo "    ⚠️ 異常終了 - Exit Code $EXIT_CODE（要調査）"
                 ;;
         esac
         
-        # 最後のログエントリで詳細確認
-        echo "  Last Log Entries:"
-        ssh Cinnamon "docker logs --tail 3 $container" | sed 's/^/    /'
+        # 対応推奨アクション
+        echo "  💡 Recommended Actions:"
+        if [ "$EXIT_CODE" = "0" ]; then
+            echo "    ✅ アクション不要 - 正常完了済み"
+        else
+            if [ -n "$AUTH_ERROR" ]; then
+                echo "    🔑 Cookie更新が必要"
+            fi
+            if [ -n "$ACCOUNT_LOCK" ]; then
+                echo "    ⏳ アカウントロック解除を待機"
+            fi
+            if [ -n "$RATE_LIMIT" ]; then
+                echo "    ⏰ レート制限解除後に再開"
+            fi
+            if [ -n "$API_ERROR" ] || [ -n "$NETWORK_ERROR" ]; then
+                echo "    🔄 システム状態確認後に再起動"
+            fi
+            if [ -z "$AUTH_ERROR" ] && [ -z "$ACCOUNT_LOCK" ] && [ -z "$RATE_LIMIT" ] && [ -z "$API_ERROR" ] && [ -z "$NETWORK_ERROR" ]; then
+                echo "    🔍 詳細ログ調査が必要"
+            fi
+        fi
+        
         echo
     done
 else
