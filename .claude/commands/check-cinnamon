@@ -15,7 +15,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 
 # コンテナ稼働状態と健康チェック
 echo "🔍 Container Status (稼働中/停止中の詳細分析):"
-CONTAINER_STATUS=$(ssh Cinnamon "docker ps -a --filter 'name=bulk-block-users' --format 'table {{.Names}}\t{{.Status}}\t{{.State}}\t{{.ExitCode}}'")
+CONTAINER_STATUS=$(ssh Cinnamon "docker ps -a --filter 'name=bulk-block-users' --format 'table {{.Names}}\t{{.Status}}\t{{.State}}'")
 echo "$CONTAINER_STATUS"
 echo
 
