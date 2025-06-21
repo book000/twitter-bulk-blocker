@@ -375,6 +375,8 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "📈 Processing Speed Analysis:"
 TOTAL_BLOCKED=0
 TOTAL_TARGETS=0
+CURRENT_TIME=$(date +%s)
+
 for container in $STOPPED_CONTAINERS $RUNNING_CONTAINERS; do
     if [ -n "$container" ]; then
         SERVICE_NAME=$(echo $container | sed 's/bulk-block-users-//' | sed 's/-1$//')
@@ -393,6 +395,146 @@ done
 if [ "$TOTAL_TARGETS" -gt 0 ]; then
     OVERALL_COMPLETION=$(echo "scale=1; $TOTAL_BLOCKED * 100 / $TOTAL_TARGETS" | bc 2>/dev/null || echo "0")
     echo "  - 全体進捗: $TOTAL_BLOCKED/$TOTAL_TARGETS (${OVERALL_COMPLETION}%)"
+fi
+
+# 🆕 処理効率予測機能（完了予想時刻算出）
+echo
+echo "🔮 PROCESSING EFFICIENCY PREDICTION"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# 稼働中サービスの完了予想時刻を算出
+for container in $RUNNING_CONTAINERS; do
+    if [ -n "$container" ]; then
+        SERVICE_NAME=$(echo $container | sed 's/bulk-block-users-//' | sed 's/-1$//')
+        
+        # コンテナ開始時刻を取得
+        START_TIME=$(ssh Cinnamon "docker inspect $container --format '{{.State.StartedAt}}'" | sed 's/T/ /' | cut -d'.' -f1)
+        START_TIMESTAMP=$(date -d "$START_TIME UTC" +%s 2>/dev/null || echo "0")
+        
+        # 進捗データを取得（より詳細な検索）
+        CONTAINER_LOGS=$(ssh Cinnamon "docker logs $container" 2>/dev/null)
+        
+        # 最新の進捗ログを検索（複数パターンに対応）
+        PROGRESS_LINE=$(echo "$CONTAINER_LOGS" | grep -E "進捗: [0-9,]+/[0-9,]+ 完了|ブロック済み: [0-9,]+人|全対象ユーザー: [0-9,]+人" | tail -3)
+        
+        # ブロック済み数と対象総数を抽出
+        BLOCKED=$(echo "$PROGRESS_LINE" | grep -o "ブロック: [0-9,]*" | grep -o "[0-9,]*" | tr -d ',' | tail -1)
+        if [ -z "$BLOCKED" ]; then
+            BLOCKED=$(echo "$PROGRESS_LINE" | grep -o "ブロック済み: [0-9,]*人" | grep -o "[0-9,]*" | tr -d ',' | tail -1)
+        fi
+        
+        TARGETS=$(echo "$PROGRESS_LINE" | grep -o "全対象ユーザー: [0-9,]*人" | grep -o "[0-9,]*" | tr -d ',' | tail -1)
+        if [ -z "$TARGETS" ]; then
+            # 進捗行から対象総数を抽出
+            TARGETS=$(echo "$PROGRESS_LINE" | grep -o "/[0-9,]* 完了" | grep -o "[0-9,]*" | tr -d ',' | tail -1)
+        fi
+        
+        if [ -n "$BLOCKED" ] && [ -n "$TARGETS" ] && [ "$START_TIMESTAMP" -gt 0 ]; then
+            # 実行時間を計算
+            RUNTIME_SECONDS=$((CURRENT_TIME - START_TIMESTAMP))
+            RUNTIME_HOURS=$(echo "scale=1; $RUNTIME_SECONDS / 3600" | bc 2>/dev/null || echo "0")
+            
+            # 処理速度を計算（件/時間）
+            if [ "$RUNTIME_SECONDS" -gt 0 ]; then
+                PROCESSING_RATE=$(echo "scale=2; $BLOCKED * 3600 / $RUNTIME_SECONDS" | bc 2>/dev/null || echo "0")
+                
+                # 残り作業量と完了予想時刻を計算
+                REMAINING=$(echo "$TARGETS - $BLOCKED" | bc 2>/dev/null || echo "0")
+                
+                if [ "$PROCESSING_RATE" != "0" ] && [ "$REMAINING" -gt 0 ]; then
+                    # 完了までの残り時間（秒）
+                    REMAINING_SECONDS=$(echo "scale=0; $REMAINING * 3600 / $PROCESSING_RATE" | bc 2>/dev/null || echo "0")
+                    ESTIMATED_COMPLETION=$((CURRENT_TIME + REMAINING_SECONDS))
+                    
+                    # 日本時間での完了予想時刻
+                    COMPLETION_TIME=$(date -d "@$ESTIMATED_COMPLETION" '+%Y/%m/%d %H:%M' 2>/dev/null || echo "計算不可")
+                    
+                    # 残り時間の人間が読みやすい形式
+                    REMAINING_HOURS=$(echo "scale=1; $REMAINING_SECONDS / 3600" | bc 2>/dev/null || echo "0")
+                    REMAINING_DAYS=$(echo "scale=1; $REMAINING_HOURS / 24" | bc 2>/dev/null || echo "0")
+                    
+                    echo "📊 Service: $SERVICE_NAME"
+                    echo "  ⏱️  実行時間: ${RUNTIME_HOURS}時間"
+                    echo "  🚀 処理速度: ${PROCESSING_RATE}件/時間"
+                    echo "  📈 進捗率: $(echo "scale=1; $BLOCKED * 100 / $TARGETS" | bc 2>/dev/null || echo "0")%"
+                    echo "  📋 残り作業: ${REMAINING}件"
+                    
+                    if [ "$REMAINING_DAYS" != "0" ] && [ $(echo "$REMAINING_DAYS >= 1" | bc 2>/dev/null) -eq 1 ]; then
+                        echo "  ⏰ 完了予想: $COMPLETION_TIME (約${REMAINING_DAYS}日後)"
+                    else
+                        echo "  ⏰ 完了予想: $COMPLETION_TIME (約${REMAINING_HOURS}時間後)"
+                    fi
+                    
+                    # 効率性の評価
+                    if [ $(echo "$PROCESSING_RATE >= 50" | bc 2>/dev/null) -eq 1 ]; then
+                        echo "  💡 効率評価: 🟢 優秀 (目標50件/時間以上達成)"
+                    elif [ $(echo "$PROCESSING_RATE >= 30" | bc 2>/dev/null) -eq 1 ]; then
+                        echo "  💡 効率評価: 🟡 良好 (改善余地あり)"
+                    else
+                        echo "  💡 効率評価: 🔴 要改善 (目標50件/時間未達)"
+                    fi
+                else
+                    echo "📊 Service: $SERVICE_NAME"
+                    echo "  ⏱️  実行時間: ${RUNTIME_HOURS}時間"
+                    echo "  🚀 処理速度: ${PROCESSING_RATE}件/時間"
+                    echo "  📈 進捗率: $(echo "scale=1; $BLOCKED * 100 / $TARGETS" | bc 2>/dev/null || echo "0")%"
+                    if [ "$REMAINING" -eq 0 ]; then
+                        echo "  ✅ 状態: 処理完了済み"
+                    else
+                        echo "  ⚠️  状態: 処理速度が低すぎるため完了予想時刻を算出できません"
+                    fi
+                fi
+            else
+                echo "📊 Service: $SERVICE_NAME"
+                echo "  ⚠️  状態: 実行時間が短すぎるため分析できません"
+            fi
+            echo
+        fi
+    fi
+done
+
+# 全体の処理効率サマリー
+if [ "$TOTAL_TARGETS" -gt 0 ] && [ -n "$RUNNING_CONTAINERS" ]; then
+    ACTIVE_SERVICES=$(echo "$RUNNING_CONTAINERS" | wc -l)
+    echo "📈 Overall Processing Summary:"
+    echo "  🔄 稼働中サービス: ${ACTIVE_SERVICES}個"
+    echo "  📊 全体進捗: ${OVERALL_COMPLETION}%"
+    
+    # 平均処理速度の推定（全稼働サービスから）
+    TOTAL_PROCESSING_RATE=0
+    SERVICES_WITH_RATE=0
+    
+    for container in $RUNNING_CONTAINERS; do
+        if [ -n "$container" ]; then
+            START_TIME=$(ssh Cinnamon "docker inspect $container --format '{{.State.StartedAt}}'" | sed 's/T/ /' | cut -d'.' -f1)
+            START_TIMESTAMP=$(date -d "$START_TIME UTC" +%s 2>/dev/null || echo "0")
+            BLOCKED=$(ssh Cinnamon "docker logs $container" | grep "ブロック済み" | tail -1 | grep -o '[0-9,]*人' | tr -d ',人' | head -1)
+            
+            if [ "$START_TIMESTAMP" -gt 0 ] && [ -n "$BLOCKED" ]; then
+                RUNTIME_SECONDS=$((CURRENT_TIME - START_TIMESTAMP))
+                if [ "$RUNTIME_SECONDS" -gt 0 ]; then
+                    SERVICE_RATE=$(echo "scale=2; $BLOCKED * 3600 / $RUNTIME_SECONDS" | bc 2>/dev/null || echo "0")
+                    TOTAL_PROCESSING_RATE=$(echo "$TOTAL_PROCESSING_RATE + $SERVICE_RATE" | bc 2>/dev/null || echo "0")
+                    SERVICES_WITH_RATE=$((SERVICES_WITH_RATE + 1))
+                fi
+            fi
+        fi
+    done
+    
+    if [ "$SERVICES_WITH_RATE" -gt 0 ]; then
+        AVG_PROCESSING_RATE=$(echo "scale=1; $TOTAL_PROCESSING_RATE / $SERVICES_WITH_RATE" | bc 2>/dev/null || echo "0")
+        echo "  🚀 平均処理速度: ${AVG_PROCESSING_RATE}件/時間"
+        
+        # システム全体の効率評価
+        if [ $(echo "$AVG_PROCESSING_RATE >= 50" | bc 2>/dev/null) -eq 1 ]; then
+            echo "  💡 システム効率: 🟢 優秀 (目標達成)"
+        elif [ $(echo "$AVG_PROCESSING_RATE >= 30" | bc 2>/dev/null) -eq 1 ]; then
+            echo "  💡 システム効率: 🟡 良好 (最適化推奨)"
+        else
+            echo "  💡 システム効率: 🔴 要改善 (緊急最適化必要)"
+        fi
+    fi
+    echo
 fi
 
 # 8. エラー分析とパターン特定（長期履歴対応）
