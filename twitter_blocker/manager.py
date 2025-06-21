@@ -9,6 +9,7 @@ from .api import TwitterAPI
 from .config import ConfigManager, CookieManager
 from .database import DatabaseManager
 from .retry import RetryManager
+from .version import get_version_string
 
 
 class BulkBlockManager:
@@ -84,6 +85,7 @@ class BulkBlockManager:
     ) -> None:
         """一括ブロック処理を実行"""
         print("=== 一括ブロック処理開始 ===")
+        print(f"実行バージョン: {get_version_string()}")
 
         # 処理対象ユーザーを取得
         remaining_users = self.get_remaining_users()
@@ -129,6 +131,7 @@ class BulkBlockManager:
     def process_retries(self, max_retries: Optional[int] = None) -> None:
         """リトライ処理を実行"""
         print("=== リトライ処理開始 ===")
+        print(f"実行バージョン: {get_version_string()}")
 
         retry_candidates = self.get_retry_candidates()
 

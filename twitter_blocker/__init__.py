@@ -10,6 +10,6 @@ Twitter一括ブロックツール
 from .api import TwitterAPI
 from .database import DatabaseManager
 from .manager import BulkBlockManager
+from .version import get_version_info, __version__
 
-__version__ = "1.0.0"
-__all__ = ["BulkBlockManager", "TwitterAPI", "DatabaseManager"]
+__all__ = ["BulkBlockManager", "TwitterAPI", "DatabaseManager", "get_version_info", "__version__"]
