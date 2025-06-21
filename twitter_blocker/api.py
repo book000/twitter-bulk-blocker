@@ -164,8 +164,8 @@ class TwitterAPI:
         self._consecutive_errors = 0  # 連続エラー数
         self._error_window_start = None  # エラー監視窓の開始時刻
         self._error_count_in_window = 0  # 指定時間内のエラー数
-        self._error_window_duration = 300  # 5分間のエラー監視窓（秒）
-        self._max_errors_in_window = 50  # 5分間で50回エラーでCookie再読み込み
+        self._error_window_duration = 1800  # 30分間のエラー監視窓（秒）
+        self._max_errors_in_window = 50  # 30分間で50回エラーでCookie再読み込み
         self._max_consecutive_errors = 10  # 連続10回エラーでCookie再読み込み
 
 
@@ -1210,11 +1210,11 @@ class TwitterAPI:
             reason = f"連続{self._consecutive_errors}回エラー"
         elif self._error_count_in_window >= self._max_errors_in_window:
             needs_cookie_reload = True
-            reason = f"5分間で{self._error_count_in_window}回エラー"
+            reason = f"30分間で{self._error_count_in_window}回エラー"
         
         if needs_cookie_reload:
             print(f"\n⚠️ エラー多発検出 ({identifier}): {reason}")
-            print(f"📊 エラー統計: 連続={self._consecutive_errors}回, 5分間={self._error_count_in_window}回")
+            print(f"📊 エラー統計: 連続={self._consecutive_errors}回, 30分間={self._error_count_in_window}回")
             return True
         
         return False
