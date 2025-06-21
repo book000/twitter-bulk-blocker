@@ -1,0 +1,295 @@
+name: Release and Docker Build
+
+on:
+  push:
+    branches:
+      - master
+      - main
+  pull_request:
+    branches:
+      - master
+      - main
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 全履歴を取得（バージョン計算用）
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --no-cache-dir --upgrade pip
+          pip install --no-cache-dir -r requirements.txt
+      
+      - name: Run syntax check
+        run: |
+          python3 -m py_compile twitter_blocker/*.py
+      
+      - name: Test version module
+        run: |
+          python3 -c "
+          import twitter_blocker.version as v
+          print(f'Version: {v.__version__}')
+          print(f'Version string: {v.get_version_string()}')
+          version_info = v.get_version_info()
+          print(f'Version info keys: {list(version_info.keys())}')
+          "
+
+  semantic-release:
+    name: Semantic Release
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
+    outputs:
+      new_release_published: ${{ steps.semantic.outputs.new_release_published }}
+      new_release_version: ${{ steps.semantic.outputs.new_release_version }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      
+      - name: Install semantic-release
+        run: |
+          npm install -g semantic-release@22 \
+            @semantic-release/commit-analyzer@11 \
+            @semantic-release/release-notes-generator@12 \
+            @semantic-release/github@9 \
+            @semantic-release/exec@6
+      
+      - name: Create semantic-release config
+        run: |
+          cat > .releaserc.json << 'EOF'
+          {
+            "branches": ["master", "main"],
+            "plugins": [
+              [
+                "@semantic-release/commit-analyzer",
+                {
+                  "preset": "conventionalcommits",
+                  "releaseRules": [
+                    {"type": "feat", "release": "minor"},
+                    {"type": "fix", "release": "patch"},
+                    {"type": "perf", "release": "patch"},
+                    {"type": "docs", "release": false},
+                    {"type": "style", "release": false},
+                    {"type": "refactor", "release": "patch"},
+                    {"type": "test", "release": false},
+                    {"type": "build", "release": "patch"},
+                    {"type": "ci", "release": false},
+                    {"type": "chore", "release": false},
+                    {"type": "revert", "release": "patch"},
+                    {"breaking": true, "release": "major"}
+                  ]
+                }
+              ],
+              [
+                "@semantic-release/release-notes-generator",
+                {
+                  "preset": "conventionalcommits"
+                }
+              ],
+              [
+                "@semantic-release/exec",
+                {
+                  "prepareCmd": "echo 'RELEASE_VERSION=${nextRelease.version}' >> $GITHUB_ENV"
+                }
+              ],
+              [
+                "@semantic-release/github",
+                {
+                  "assets": []
+                }
+              ]
+            ]
+          }
+          EOF
+      
+      - name: Run semantic-release
+        id: semantic
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          npx semantic-release
+          
+          # semantic-releaseの出力をGitHub Actionsの出力として設定
+          if [ -f .semantic-release-info.json ]; then
+            NEW_VERSION=$(cat .semantic-release-info.json | jq -r '.new_release_version // empty')
+            NEW_RELEASE=$(cat .semantic-release-info.json | jq -r '.new_release_published // "false"')
+          else
+            NEW_VERSION=""
+            NEW_RELEASE="false"
+          fi
+          
+          echo "new_release_published=$NEW_RELEASE" >> $GITHUB_OUTPUT
+          echo "new_release_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          
+          if [ "$NEW_RELEASE" = "true" ]; then
+            echo "✅ New release created: v$NEW_VERSION"
+          else
+            echo "ℹ️ No new release created"
+          fi
+
+  docker-build:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+    needs: [test, semantic-release]
+    if: always() && (needs.semantic-release.outputs.new_release_published == 'true' || github.event_name == 'pull_request')
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Determine version and tags
+        id: meta
+        run: |
+          # バージョン情報の取得
+          if [ "${{ needs.semantic-release.outputs.new_release_published }}" = "true" ]; then
+            VERSION="${{ needs.semantic-release.outputs.new_release_version }}"
+          else
+            # PRまたはリリースなしの場合はGitベースのバージョン
+            VERSION=$(python3 -c "
+            import twitter_blocker.version as v
+            git_info = v.get_git_info()
+            base_version = v.__version__
+            if git_info['commit_short']:
+              version = f'{base_version}-{git_info[\"commit_short\"]}'
+              if git_info['dirty']:
+                version += '-dirty'
+              print(version)
+            else:
+              print(base_version)
+            ")
+          fi
+          
+          # Docker タグの設定
+          REPO_NAME=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')
+          
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            # PR の場合
+            TAGS="ghcr.io/${REPO_NAME}:pr-${{ github.event.number }}"
+          elif [ "${{ needs.semantic-release.outputs.new_release_published }}" = "true" ]; then
+            # リリースの場合
+            TAGS="ghcr.io/${REPO_NAME}:${VERSION},ghcr.io/${REPO_NAME}:latest"
+          else
+            # その他（手動実行など）
+            TAGS="ghcr.io/${REPO_NAME}:${VERSION}"
+          fi
+          
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "tags=${TAGS}" >> $GITHUB_OUTPUT
+          echo "repo=${REPO_NAME}" >> $GITHUB_OUTPUT
+          
+          # ビルド日時とコミット情報
+          echo "build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_OUTPUT
+          echo "commit_sha=${{ github.sha }}" >> $GITHUB_OUTPUT
+          echo "commit_short=${GITHUB_SHA:0:8}" >> $GITHUB_OUTPUT
+      
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+            BUILD_DATE=${{ steps.meta.outputs.build_date }}
+            COMMIT_SHA=${{ steps.meta.outputs.commit_sha }}
+            COMMIT_SHORT=${{ steps.meta.outputs.commit_short }}
+          labels: |
+            org.opencontainers.image.title=Twitter Bulk Blocker
+            org.opencontainers.image.description=高度なキャッシュ戦略とバッチ処理を備えたエンタープライズグレードの大規模Twitter一括ブロックシステム
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+            org.opencontainers.image.created=${{ steps.meta.outputs.build_date }}
+            org.opencontainers.image.revision=${{ steps.meta.outputs.commit_sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.url=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.documentation=${{ github.server_url }}/${{ github.repository }}#readme
+            org.opencontainers.image.vendor=${{ github.repository_owner }}
+            org.opencontainers.image.licenses=MIT
+      
+      - name: Output build summary
+        run: |
+          echo "## 🐳 Docker Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Version | \`${{ steps.meta.outputs.version }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Tags | \`${{ steps.meta.outputs.tags }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build Date | ${{ steps.meta.outputs.build_date }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | \`${{ steps.meta.outputs.commit_short }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Event | ${{ github.event_name }} |" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 📦 Pull Command" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+            echo "docker pull ${{ steps.meta.outputs.tags }}" | cut -d',' -f1 >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  update-version-file:
+    name: Update Version File (Optional)
+    runs-on: ubuntu-latest
+    needs: [semantic-release]
+    if: needs.semantic-release.outputs.new_release_published == 'true'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+      
+      - name: Update version.py
+        run: |
+          NEW_VERSION="${{ needs.semantic-release.outputs.new_release_version }}"
+          
+          # version.pyのバージョンを更新（オプション）
+          # 注意: これはオプショナルです。GitベースのバージョニングでGitHub Actionsのタグを使用することも可能
+          sed -i "s/__version__ = \".*\"/__version__ = \"$NEW_VERSION\"/" twitter_blocker/version.py
+          
+          # 変更があるかチェック
+          if git diff --quiet twitter_blocker/version.py; then
+            echo "No version changes detected"
+            exit 0
+          fi
+          
+          # コミットとプッシュ
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add twitter_blocker/version.py
+          git commit -m "chore: bump version to v$NEW_VERSION [skip ci]"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

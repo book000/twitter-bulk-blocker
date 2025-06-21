@@ -5,6 +5,7 @@
 from typing import Any, Dict, List
 
 from .manager import BulkBlockManager
+from .version import get_version_string
 
 
 def show_stats(manager: BulkBlockManager) -> None:
@@ -36,6 +37,7 @@ def show_stats(manager: BulkBlockManager) -> None:
         effective_remaining = 0
 
     print("=== 処理統計 ===")
+    print(f"バージョン: {get_version_string()}")
     print(f"全対象ユーザー: {total_targets:,}人")
     print(f"ブロック済み: {blocked_count:,}人")
     if permanent_failures > 0:

@@ -11,6 +11,7 @@ import sys
 
 from . import BulkBlockManager
 from .stats import show_stats
+from .version import print_version_info, get_version_string
 
 
 def main():
@@ -38,6 +39,7 @@ def main():
         help="--allと組み合わせて使用：実行後に自動でリトライ処理も実行",
     )
     parser.add_argument("--stats", action="store_true", help="現在の処理統計を表示")
+    parser.add_argument("--version", action="store_true", help="バージョン情報を表示")
     parser.add_argument("--debug-errors", action="store_true", help="失敗したエラーメッセージのサンプルを表示（デバッグ用）")
     parser.add_argument("--debug", action="store_true", help="デバッグモードで実行（詳細なAPI応答を表示）")
     parser.add_argument("--test-user", type=str, help="特定のユーザーのみテスト（デバッグ用）")
@@ -86,6 +88,11 @@ def main():
 
     args = parser.parse_args()
 
+    # バージョン情報表示
+    if args.version:
+        print_version_info(detailed=True)
+        return
+
     # ファイル存在チェック
     if not args.stats and not args.retry and not args.reset_retry and not args.clear_errors and not args.reset_failed and not args.debug_errors and not args.test_user:
         if not os.path.exists(args.cookies):
@@ -103,6 +110,11 @@ def main():
             print(f"  --users-file /path/to/users.json")
             print(f"  または環境変数: export TWITTER_USERS_FILE=/path/to/users.json")
             sys.exit(1)
+
+    # バージョン情報をログ開始時に表示
+    if not args.stats and not args.debug_errors:
+        print(f"🚀 {get_version_string()}")
+        print()
 
     # パスの表示
     print(f"📁 使用ファイル:")

@@ -1,0 +1,41 @@
+{
+  "name": "twitter-bulk-blocker",
+  "version": "0.28.1",
+  "description": "高度なキャッシュ戦略とバッチ処理を備えたエンタープライズグレードの大規模Twitter一括ブロックシステム",
+  "keywords": [
+    "twitter",
+    "block",
+    "bulk",
+    "api",
+    "python",
+    "cache",
+    "batch-processing"
+  ],
+  "homepage": "https://github.com/book000/twitter-bulk-blocker",
+  "bugs": {
+    "url": "https://github.com/book000/twitter-bulk-blocker/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/book000/twitter-bulk-blocker.git"
+  },
+  "license": "MIT",
+  "author": "book000",
+  "main": "twitter_blocker/__main__.py",
+  "scripts": {
+    "test": "python3 -m py_compile twitter_blocker/*.py",
+    "lint": "python3 -m flake8 twitter_blocker/ --max-line-length=120 --ignore=E501,W503",
+    "version": "python3 scripts/test-version.py",
+    "docker:build": "docker build -t twitter-bulk-blocker .",
+    "docker:run": "docker run --rm -v $(pwd)/data:/app/data twitter-bulk-blocker"
+  },
+  "engines": {
+    "python": ">=3.8"
+  },
+  "files": [
+    "twitter_blocker/",
+    "requirements.txt",
+    "README.md",
+    "examples.md"
+  ]
+}
