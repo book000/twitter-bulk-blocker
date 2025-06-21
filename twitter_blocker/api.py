@@ -159,6 +159,14 @@ class TwitterAPI:
         self._login_user_id = None  # ログインユーザーIDのキャッシュ
         self._auth_retry_count = 0  # 認証エラー時の再試行カウント
         self._max_auth_retries = 10  # 最大認証再試行回数（Cookie更新後の信頼性向上）
+        
+        # エラー多発検出用
+        self._consecutive_errors = 0  # 連続エラー数
+        self._error_window_start = None  # エラー監視窓の開始時刻
+        self._error_count_in_window = 0  # 指定時間内のエラー数
+        self._error_window_duration = 300  # 5分間のエラー監視窓（秒）
+        self._max_errors_in_window = 50  # 5分間で50回エラーでCookie再読み込み
+        self._max_consecutive_errors = 10  # 連続10回エラーでCookie再読み込み
 
 
     def get_user_info(self, screen_name: str) -> Optional[Dict[str, Any]]:
@@ -214,8 +222,8 @@ class TwitterAPI:
 
             # アカウントロック検出
             if self._is_account_locked(response):
-                print(f"アカウントロック検出 ({screen_name}): 処理を終了します")
-                raise SystemExit("Account locked - terminating process")
+                return self._handle_account_lock_error(screen_name, "get_user_info", 
+                                                       lambda: self.get_user_info(screen_name))
 
             if response.status_code == 200:
                 result = self._parse_user_response(response.json(), screen_name)
@@ -227,15 +235,30 @@ class TwitterAPI:
                     self._save_profile_to_cache(result["id"], result)
                     # 関係情報キャッシュに関係データを保存
                     self._save_relationship_to_cache(result["id"], result)
+                # 成功時はエラーカウンターをリセット
+                self._reset_error_counters_on_success()
                 return result
 
             # ステータスコード別のエラー表示
             error_msg = self._get_detailed_error_message(response, screen_name)
             print(f"ユーザー情報取得失敗 ({screen_name}): {error_msg}")
+            
+            # エラー多発チェック
+            if self._track_error_and_check_cookie_reload(screen_name, "user_info"):
+                return self._handle_frequent_errors(screen_name, "get_user_info", 
+                                                   lambda: self.get_user_info(screen_name))
+            
             return None
 
         except Exception as e:
             print(f"ユーザー情報取得エラー ({screen_name}): {e}")
+            # エラー多発チェック（例外でも追跡）
+            if self._track_error_and_check_cookie_reload(screen_name, "exception"):
+                try:
+                    return self._handle_frequent_errors(screen_name, "get_user_info", 
+                                                       lambda: self.get_user_info(screen_name))
+                except:
+                    pass  # 回復に失敗した場合は通常のエラーとして扱う
             return None
 
     def get_user_info_by_id(self, user_id: str) -> Optional[Dict[str, Any]]:
@@ -287,8 +310,8 @@ class TwitterAPI:
 
             # アカウントロック検出
             if self._is_account_locked(response):
-                print(f"アカウントロック検出 (ID: {user_id}): 処理を終了します")
-                raise SystemExit("Account locked - terminating process")
+                return self._handle_account_lock_error(user_id, "get_user_info_by_id", 
+                                                       lambda: self.get_user_info_by_id(user_id))
 
             if response.status_code == 200:
                 result = self._parse_user_response(response.json(), user_id)
@@ -447,8 +470,8 @@ class TwitterAPI:
 
             # アカウントロック検出
             if self._is_account_locked(response):
-                print(f"アカウントロック検出 (batch): 処理を終了します")
-                raise SystemExit("Account locked - terminating process")
+                return self._handle_account_lock_error(f"batch({len(user_ids)}users)", "get_users_batch", 
+                                                       lambda: self._fetch_users_batch(user_ids))
 
             if response.status_code == 200:
                 return self._parse_users_batch_response(response.json(), user_ids)
@@ -591,7 +614,8 @@ class TwitterAPI:
                                                lambda: self._fetch_single_screen_name_lookup(screen_name))
 
             if self._is_account_locked(response):
-                raise SystemExit("Account locked - terminating process")
+                return self._handle_account_lock_error(screen_name, "_fetch_single_screen_name_lookup", 
+                                                       lambda: self._fetch_single_screen_name_lookup(screen_name))
 
             if response.status_code == 200:
                 # 基本情報のみ解析（関係情報なし）
@@ -659,8 +683,8 @@ class TwitterAPI:
 
             # アカウントロック検出
             if self._is_account_locked(response):
-                print(f"  アカウントロック検出 ({screen_name}): 処理を終了します")
-                raise SystemExit("Account locked - terminating process")
+                return self._handle_account_lock_error(screen_name, "_fetch_single_screen_name", 
+                                                       lambda: self._fetch_single_screen_name(screen_name))
 
             if response.status_code == 200:
                 return self._parse_user_response(response.json(), screen_name)
@@ -704,14 +728,22 @@ class TwitterAPI:
 
             # アカウントロック検出
             if self._is_account_locked(response):
-                print(f"アカウントロック検出 (block): 処理を終了します")
-                raise SystemExit("Account locked - terminating process")
+                return self._handle_account_lock_error(f"block {screen_name}", "block_user", 
+                                                       lambda: self.block_user(user_id, screen_name))
 
             if response.status_code == 200:
+                # 成功時はエラーカウンターをリセット
+                self._reset_error_counters_on_success()
                 return {"success": True, "status_code": 200}
 
             # その他のエラー
             error_msg = self._get_detailed_error_message(response, f"block {screen_name}")
+            
+            # エラー多発チェック
+            if self._track_error_and_check_cookie_reload(f"block {screen_name}", "block"):
+                return self._handle_frequent_errors(f"block {screen_name}", "block_user", 
+                                                   lambda: self.block_user(user_id, screen_name))
+            
             return {
                 "success": False,
                 "status_code": response.status_code,
@@ -719,6 +751,14 @@ class TwitterAPI:
             }
 
         except Exception as e:
+            # エラー多発チェック（例外でも追跡）
+            if self._track_error_and_check_cookie_reload(f"block {screen_name}", "exception"):
+                try:
+                    return self._handle_frequent_errors(f"block {screen_name}", "block_user", 
+                                                       lambda: self.block_user(user_id, screen_name))
+                except:
+                    pass  # 回復に失敗した場合は通常のエラーとして扱う
+            
             return {
                 "success": False,
                 "status_code": 0,
@@ -1047,6 +1087,195 @@ class TwitterAPI:
             except:
                 pass
         return False
+
+    def _handle_account_lock_error(self, identifier: str, method_name: str, retry_func):
+        """アカウントロックエラーをハンドリングし、クッキーを再読み込みして再試行"""
+        if self._auth_retry_count < self._max_auth_retries:
+            self._auth_retry_count += 1
+            print(f"\n🔒 アカウントロック検出 ({identifier}): Cookie再読み込み＋リトライ {self._auth_retry_count}/{self._max_auth_retries}")
+            
+            # ログインユーザーIDのキャッシュをクリア
+            self._login_user_id = None
+            
+            # リトライ間隔の計算（アカウントロック用により長い待機）
+            base_delay = min(5 ** (self._auth_retry_count - 1), 300)  # より長い待機（最大5分）
+            jitter = random.uniform(0.8, 1.2)  # 小さなランダム要素
+            retry_delay = base_delay * jitter
+            
+            print(f"📊 アカウントロック用リトライ戦略: 基本待機時間={base_delay}秒, 調整後={retry_delay:.1f}秒")
+            
+            # クッキーファイルの更新を待機
+            try:
+                # 現在のクッキーファイルのタイムスタンプを取得
+                cookie_path = Path(self.cookie_manager.cookies_file)
+                if cookie_path.exists():
+                    initial_mtime = cookie_path.stat().st_mtime
+                    print(f"🕒 Cookie更新待機中... (現在: {datetime.fromtimestamp(initial_mtime).strftime('%H:%M:%S')})")
+                    
+                    # より長い時間をかけてCookie更新を待機
+                    max_wait_time = max(60, retry_delay)  # 最低60秒
+                    start_time = time.time()
+                    
+                    while time.time() - start_time < max_wait_time:
+                        time.sleep(5)  # 5秒間隔でチェック
+                        if cookie_path.exists():
+                            current_mtime = cookie_path.stat().st_mtime
+                            if current_mtime > initial_mtime:
+                                print(f"✅ Cookie更新検出 (更新時刻: {datetime.fromtimestamp(current_mtime).strftime('%H:%M:%S')})")
+                                break
+                        print(f"⏳ Cookie更新待機中... (経過: {int(time.time() - start_time)}秒)")
+                    else:
+                        print(f"⚠️ {max_wait_time}秒待機しましたが、Cookie更新を検出できませんでした")
+                
+                # 追加の待機時間
+                print(f"⏸️ アカウントロック解除待機: {retry_delay:.1f}秒")
+                time.sleep(retry_delay)
+                
+                # 認証リトライカウンターをリセット（新しいCookieでリトライ）
+                temp_auth_retry = self._auth_retry_count
+                self._auth_retry_count = 0
+                
+                try:
+                    # リトライ実行
+                    print(f"🔄 アカウントロック回復試行中...")
+                    result = retry_func()
+                    # 成功した場合はカウンターをリセット
+                    self._auth_retry_count = 0
+                    print(f"✅ アカウントロック回復成功！({temp_auth_retry}回目で成功)")
+                    return result
+                except SystemExit as e:
+                    if "Account locked" in str(e):
+                        # まだアカウントロック状態の場合
+                        self._auth_retry_count = temp_auth_retry
+                        if self._auth_retry_count < self._max_auth_retries:
+                            print(f"🔒 アカウントロック継続中、再リトライします...")
+                            return self._handle_account_lock_error(identifier, method_name, retry_func)
+                        else:
+                            print(f"🚫 最大リトライ回数（{self._max_auth_retries}回）に達しました")
+                            raise
+                    else:
+                        raise
+                except Exception as e:
+                    # その他のエラーの場合、カウンターを戻して再試行
+                    self._auth_retry_count = temp_auth_retry
+                    if self._auth_retry_count < self._max_auth_retries:
+                        return self._handle_account_lock_error(identifier, method_name, retry_func)
+                    else:
+                        raise
+                        
+            except Exception as e:
+                print(f"❌ アカウントロック回復エラー ({identifier}): {e}")
+                if self._auth_retry_count < self._max_auth_retries:
+                    time.sleep(retry_delay)
+                    return self._handle_account_lock_error(identifier, method_name, retry_func)
+                else:
+                    raise
+                    
+        # 再試行回数を超えた場合
+        print(f"\n🚫 アカウントロック最終判定 ({identifier}): {self._max_auth_retries}回のリトライ後もロック状態")
+        print("📋 考えられる原因:")
+        print("  1. 長期的なアカウント制限")
+        print("  2. セキュリティ検証が必要")
+        print("  3. 新しいCookieファイルが必要")
+        print("🔧 対処方法: ブラウザでTwitterにログインし、新しいCookieファイルを取得してください")
+        self._auth_retry_count = 0  # カウンターをリセット
+        raise SystemExit("Account locked - Cookie reload failed")
+
+    def _track_error_and_check_cookie_reload(self, identifier: str, error_type: str = "general") -> bool:
+        """エラーを追跡し、Cookie再読み込みが必要かチェック"""
+        current_time = time.time()
+        
+        # 連続エラー数をカウント
+        self._consecutive_errors += 1
+        
+        # エラー監視窓の管理
+        if self._error_window_start is None:
+            self._error_window_start = current_time
+            self._error_count_in_window = 1
+        else:
+            # 監視窓内のエラーかチェック
+            if current_time - self._error_window_start <= self._error_window_duration:
+                self._error_count_in_window += 1
+            else:
+                # 新しい監視窓を開始
+                self._error_window_start = current_time
+                self._error_count_in_window = 1
+        
+        # Cookie再読み込み条件のチェック
+        needs_cookie_reload = False
+        reason = ""
+        
+        if self._consecutive_errors >= self._max_consecutive_errors:
+            needs_cookie_reload = True
+            reason = f"連続{self._consecutive_errors}回エラー"
+        elif self._error_count_in_window >= self._max_errors_in_window:
+            needs_cookie_reload = True
+            reason = f"5分間で{self._error_count_in_window}回エラー"
+        
+        if needs_cookie_reload:
+            print(f"\n⚠️ エラー多発検出 ({identifier}): {reason}")
+            print(f"📊 エラー統計: 連続={self._consecutive_errors}回, 5分間={self._error_count_in_window}回")
+            return True
+        
+        return False
+
+    def _handle_frequent_errors(self, identifier: str, method_name: str, retry_func):
+        """エラー多発時のCookie再読み込み処理"""
+        print(f"\n🔄 エラー多発によるCookie再読み込み実行 ({identifier})")
+        
+        # エラーカウンターをリセット
+        self._consecutive_errors = 0
+        self._error_window_start = None
+        self._error_count_in_window = 0
+        
+        # ログインユーザーIDのキャッシュをクリア
+        self._login_user_id = None
+        
+        # Cookie再読み込み待機
+        try:
+            cookie_path = Path(self.cookie_manager.cookies_file)
+            if cookie_path.exists():
+                initial_mtime = cookie_path.stat().st_mtime
+                print(f"🕒 エラー多発対応のCookie更新待機中... (現在: {datetime.fromtimestamp(initial_mtime).strftime('%H:%M:%S')})")
+                
+                # 短い時間でCookie更新を待機（エラー多発時は緊急対応）
+                max_wait_time = 30  # 30秒で短縮
+                start_time = time.time()
+                
+                while time.time() - start_time < max_wait_time:
+                    time.sleep(2)  # 2秒間隔でチェック
+                    if cookie_path.exists():
+                        current_mtime = cookie_path.stat().st_mtime
+                        if current_mtime > initial_mtime:
+                            print(f"✅ Cookie更新検出 (更新時刻: {datetime.fromtimestamp(current_mtime).strftime('%H:%M:%S')})")
+                            break
+                    print(f"⏳ Cookie更新待機中... (経過: {int(time.time() - start_time)}秒)")
+                else:
+                    print(f"⚠️ {max_wait_time}秒待機しましたが、Cookie更新を検出できませんでした")
+            
+            # 短い待機時間でリトライ
+            retry_delay = 10  # エラー多発時は短縮
+            print(f"⏸️ エラー多発対応待機: {retry_delay}秒")
+            time.sleep(retry_delay)
+            
+            # リトライ実行
+            print(f"🔄 エラー多発回復試行中...")
+            result = retry_func()
+            print(f"✅ エラー多発回復成功！")
+            return result
+            
+        except Exception as e:
+            print(f"❌ エラー多発回復エラー ({identifier}): {e}")
+            # エラー多発回復に失敗した場合は通常のエラーとして扱う
+            raise
+
+    def _reset_error_counters_on_success(self):
+        """成功時にエラーカウンターをリセット"""
+        if self._consecutive_errors > 0 or self._error_count_in_window > 0:
+            if self.debug_mode:
+                print(f"📉 エラーカウンターリセット (連続: {self._consecutive_errors}, 窓内: {self._error_count_in_window})")
+        self._consecutive_errors = 0
+        # 監視窓は継続（時間ベースのため）
 
 
     def _get_login_user_id(self) -> str:
