@@ -142,7 +142,7 @@ class TwitterAPI:
         self.cache_ttl = 2592000  # 30日間（秒）
         self._login_user_id = None  # ログインユーザーIDのキャッシュ
         self._auth_retry_count = 0  # 認証エラー時の再試行カウント
-        self._max_auth_retries = 1  # 最大認証再試行回数
+        self._max_auth_retries = 10  # 最大認証再試行回数（Cookie更新後の信頼性向上）
 
 
     def get_user_info(self, screen_name: str) -> Optional[Dict[str, Any]]:
@@ -1285,13 +1285,20 @@ class TwitterAPI:
             print(f"関係情報キャッシュ保存エラー ({user_id}): {e}")
 
     def _handle_auth_error(self, identifier: str, method_name: str, retry_func):
-        """認証エラーをハンドリングし、クッキーを再読み込みして再試行"""
+        """認証エラーをハンドリングし、クッキーを再読み込みして再試行（最大10回）"""
         if self._auth_retry_count < self._max_auth_retries:
             self._auth_retry_count += 1
-            print(f"認証エラー検出 ({identifier}): Cookieを再読み込みして再試行します... (試行 {self._auth_retry_count}/{self._max_auth_retries})")
+            print(f"\n🔑 認証エラー検出 ({identifier}): Cookie再読み込み＋リトライ {self._auth_retry_count}/{self._max_auth_retries}")
             
             # ログインユーザーIDのキャッシュをクリア
             self._login_user_id = None
+            
+            # リトライ間隔の計算（指数バックオフ + ランダム）
+            base_delay = min(2 ** (self._auth_retry_count - 1), 60)  # 最大60秒
+            jitter = random.uniform(0.5, 1.5)  # ランダム要素
+            retry_delay = base_delay * jitter
+            
+            print(f"📊 リトライ戦略: 基本待機時間={base_delay}秒, 調整後={retry_delay:.1f}秒")
             
             # クッキーファイルの更新を待機
             try:
@@ -1299,49 +1306,90 @@ class TwitterAPI:
                 cookie_path = Path(self.cookie_manager.cookies_file)
                 if cookie_path.exists():
                     original_mtime = cookie_path.stat().st_mtime
-                    print(f"現在のCookieファイル更新時刻: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(original_mtime))}")
-                    print("Cookieファイルの更新を待機しています...")
+                    print(f"📁 現在のCookieファイル更新時刻: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(original_mtime))}")
                     
-                    # 最大1時間、ファイルの更新を待機
+                    # タイムスタンプ更新を待機
+                    if self._auth_retry_count == 1:
+                        # 初回のみ長期間待機（Cookie更新を期待）
+                        print("⏰ Cookieファイルのタイムスタンプ更新を待機中...")
+                        timeout = 3600  # 1時間
+                        check_interval = 1.0
+                    else:
+                        # 2回目以降は短期間の確認のみ
+                        print(f"⏰ Cookieファイル確認中（{self._auth_retry_count}回目のリトライ）...")
+                        timeout = 30  # 30秒
+                        check_interval = 0.5
+                    
                     start_time = time.time()
-                    timeout = 3600  # 1時間（3600秒）のタイムアウト
-                    check_interval = 1.0  # 1秒ごとにチェック
+                    cookie_updated = False
                     
                     while time.time() - start_time < timeout:
                         current_mtime = cookie_path.stat().st_mtime
                         if current_mtime > original_mtime:
                             # ファイルが更新された
-                            print(f"Cookieファイルが更新されました: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(current_mtime))}")
+                            print(f"✅ Cookieファイルが更新されました: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(current_mtime))}")
+                            cookie_updated = True
                             time.sleep(1)  # ファイル書き込み完了を待つため少し待機
                             break
                         
-                        # 進捗表示（10秒ごと）
+                        # 進捗表示（10秒ごと、またはタイムアウトが短い場合は5秒ごと）
                         elapsed = int(time.time() - start_time)
-                        if elapsed > 0 and elapsed % 10 == 0:
-                            print(f"  待機中... ({elapsed}秒経過 / 最大{timeout}秒)")
+                        progress_interval = 5 if timeout <= 60 else 10
+                        if elapsed > 0 and elapsed % progress_interval == 0:
+                            remaining = timeout - elapsed
+                            print(f"  📊 待機中... ({elapsed}秒経過 / 残り{remaining}秒)")
                         
                         time.sleep(check_interval)
-                    else:
-                        print(f"警告: {timeout/60:.0f}分待機しましたが、Cookieファイルが更新されませんでした")
+                    
+                    if not cookie_updated and self._auth_retry_count == 1:
+                        print(f"⚠️ 警告: {timeout/60:.0f}分待機しましたが、Cookieファイルが更新されませんでした")
+                        print("📋 既存のCookieでリトライを継続します")
+                    elif not cookie_updated:
+                        print(f"📋 Cookie更新なし（{timeout}秒経過）- 既存Cookieでリトライ継続")
                 
                 # クッキーキャッシュをクリア
                 self.cookie_manager.clear_cache()
-                # 少し待機してから再試行
-                time.sleep(2)
+                print(f"🧹 Cookieキャッシュをクリアしました")
                 
-                # 再試行
+                # 適応的待機時間
+                print(f"⏱️ リトライ前の待機: {retry_delay:.1f}秒")
+                time.sleep(retry_delay)
+                
+                # 再試行実行
+                print(f"🔄 リトライ実行中... ({self._auth_retry_count}/{self._max_auth_retries})")
                 result = retry_func()
                 
                 # 成功したらカウンターをリセット
+                print(f"✅ リトライ成功！認証エラーが解決されました ({self._auth_retry_count}回目で成功)")
                 self._auth_retry_count = 0
                 return result
                 
             except SystemExit:
-                # 再試行でも失敗した場合は元のエラーを再発生
-                raise
+                # 再試行でも認証エラーの場合、次のリトライに進む
+                print(f"❌ リトライ {self._auth_retry_count}回目も認証エラー")
+                if self._auth_retry_count < self._max_auth_retries:
+                    print(f"📈 次のリトライ（{self._auth_retry_count + 1}/{self._max_auth_retries}）を準備中...")
+                    # 再帰的に再試行
+                    return self._handle_auth_error(identifier, method_name, retry_func)
+                else:
+                    print(f"🚫 最大リトライ回数（{self._max_auth_retries}回）に達しました")
+                    raise
             except Exception as e:
-                print(f"クッキー再読み込みエラー ({identifier}): {e}")
+                print(f"❌ クッキー再読み込みエラー ({identifier}): {e}")
+                print(f"📈 エラーにもかかわらず次のリトライを試行...")
+                if self._auth_retry_count < self._max_auth_retries:
+                    time.sleep(retry_delay)
+                    return self._handle_auth_error(identifier, method_name, retry_func)
+                else:
+                    raise
                 
-        # 再試行回数を超えた場合、または再試行でも失敗した場合
-        print(f"認証エラー検出 ({identifier}): Cookieが無効です。処理を終了します")
+        # 再試行回数を超えた場合
+        print(f"\n🚫 認証エラー最終判定 ({identifier}): {self._max_auth_retries}回のリトライ後も認証失敗")
+        print("📋 考えられる原因:")
+        print("  1. Cookieファイルが完全に無効")
+        print("  2. アカウント制限・停止")
+        print("  3. Twitter API仕様変更")
+        print("  4. ネットワーク接続問題")
+        print("🔧 対処方法: 新しいCookieファイルの取得が必要です")
+        self._auth_retry_count = 0  # カウンターをリセット
         raise SystemExit("Authentication failed - Cookie is invalid")
