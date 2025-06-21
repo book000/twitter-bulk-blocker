@@ -496,6 +496,65 @@ echo "🖥️ Server Resource Status:"
 SERVER_STATS=$(ssh Cinnamon "uptime && free -h && df -h /" 2>/dev/null)
 if [ -n "$SERVER_STATS" ]; then
     echo "$SERVER_STATS" | sed 's/^/  /'
+    
+    # リソース警告閾値チェック
+    echo
+    echo "🚨 Resource Alert Check:"
+    
+    # Load Average チェック
+    LOAD_AVG=$(echo "$SERVER_STATS" | grep "load average" | awk -F'load average:' '{print $2}' | awk -F',' '{print $1}' | tr -d ' ')
+    LOAD_AVG_INT=$(echo "$LOAD_AVG" | cut -d'.' -f1)
+    CPU_COUNT=$(ssh Cinnamon "nproc" 2>/dev/null || echo "8")
+    LOAD_THRESHOLD=$((CPU_COUNT * 2))
+    
+    if [ -n "$LOAD_AVG_INT" ] && [ "$LOAD_AVG_INT" -gt "$LOAD_THRESHOLD" ]; then
+        echo "  ⚠️ HIGH LOAD: Load average $LOAD_AVG (閾値: $LOAD_THRESHOLD)"
+        echo "    - 原因: 複数サービスの同時処理による高負荷"
+        echo "    - 対策: 必要に応じてバッチサイズ調整を検討"
+        RESOURCE_WARNING=true
+    elif [ -n "$LOAD_AVG_INT" ] && [ "$LOAD_AVG_INT" -gt "$CPU_COUNT" ]; then
+        echo "  🟡 MEDIUM LOAD: Load average $LOAD_AVG"
+    else
+        echo "  ✅ NORMAL LOAD: Load average $LOAD_AVG"
+    fi
+    
+    # メモリ使用率チェック
+    MEM_USAGE=$(echo "$SERVER_STATS" | grep "Mem:" | awk '{print $3}' | sed 's/Gi//')
+    MEM_TOTAL=$(echo "$SERVER_STATS" | grep "Mem:" | awk '{print $2}' | sed 's/Gi//')
+    
+    if [ -n "$MEM_USAGE" ] && [ -n "$MEM_TOTAL" ]; then
+        MEM_USAGE_PCT=$(awk "BEGIN {printf \"%.0f\", ($MEM_USAGE / $MEM_TOTAL) * 100}")
+        if [ "$MEM_USAGE_PCT" -gt 85 ]; then
+            echo "  ⚠️ HIGH MEMORY: ${MEM_USAGE}GB/${MEM_TOTAL}GB (${MEM_USAGE_PCT}%使用)"
+            echo "    - メモリ使用率が高い状態です"
+            RESOURCE_WARNING=true
+        elif [ "$MEM_USAGE_PCT" -gt 70 ]; then
+            echo "  🟡 MEDIUM MEMORY: ${MEM_USAGE}GB/${MEM_TOTAL}GB (${MEM_USAGE_PCT}%使用)"
+        else
+            echo "  ✅ NORMAL MEMORY: ${MEM_USAGE}GB/${MEM_TOTAL}GB (${MEM_USAGE_PCT}%使用)"
+        fi
+    fi
+    
+    # Swap使用チェック
+    SWAP_USAGE=$(echo "$SERVER_STATS" | grep "Swap:" | awk '{print $3}')
+    if [ -n "$SWAP_USAGE" ] && [ "$SWAP_USAGE" != "0B" ]; then
+        echo "  ⚠️ SWAP IN USE: $SWAP_USAGE"
+        echo "    - Swapメモリが使用されています"
+        echo "    - パフォーマンス低下の可能性があります"
+        RESOURCE_WARNING=true
+    fi
+    
+    # ディスク使用率チェック
+    DISK_USAGE=$(echo "$SERVER_STATS" | grep "/dev/" | awk '{print $5}' | sed 's/%//')
+    if [ -n "$DISK_USAGE" ] && [ "$DISK_USAGE" -gt 90 ]; then
+        echo "  ⚠️ HIGH DISK: ${DISK_USAGE}%使用"
+        echo "    - ディスク容量が不足しています"
+        RESOURCE_WARNING=true
+    elif [ -n "$DISK_USAGE" ] && [ "$DISK_USAGE" -gt 80 ]; then
+        echo "  🟡 MEDIUM DISK: ${DISK_USAGE}%使用"
+    else
+        echo "  ✅ NORMAL DISK: ${DISK_USAGE}%使用"
+    fi
 else
     echo "  - Unable to retrieve server statistics"
 fi
@@ -607,6 +666,12 @@ if [ "$NETWORK_ERRORS_1H" -gt 5 ]; then
     HEALTH_ISSUES="${HEALTH_ISSUES}\n  - ネットワーク不安定 (1時間で${NETWORK_ERRORS_1H}件, -10点)"
 fi
 
+# リソース警告による減点
+if [ "$RESOURCE_WARNING" = true ]; then
+    HEALTH_SCORE=$((HEALTH_SCORE - 5))
+    HEALTH_ISSUES="${HEALTH_ISSUES}\n  - リソース使用率警告 (-5点)"
+fi
+
 echo "🎯 Overall Health Score: ${HEALTH_SCORE}/100"
 if [ -n "$HEALTH_ISSUES" ]; then
     echo "📋 Health Issues:"
@@ -661,6 +726,23 @@ if [ "$AUTH_ERRORS_24H" -gt 10 ]; then
     echo "     - Cookie自動更新システムの実装"
     echo "     - 複数アカウントによるフェイルオーバー機能"
     echo "     - 認証状態の定期的な検証スケジュール"
+fi
+
+# リソース管理の提案
+if [ "$RESOURCE_WARNING" = true ]; then
+    echo "  3. 💻 Resource Management Recommendations:"
+    if [ -n "$LOAD_AVG_INT" ] && [ "$LOAD_AVG_INT" -gt "$LOAD_THRESHOLD" ]; then
+        echo "     - ⚠️ 高負荷状態: 並列処理数の調整を検討"
+        echo "     - バッチサイズを現在の70%に削減"
+        echo "     - 処理間隔を延長して負荷分散"
+    fi
+    if [ "$MEM_USAGE_PCT" -gt 85 ]; then
+        echo "     - ⚠️ メモリ不足: 不要なコンテナの停止を検討"
+        echo "     - メモリリークの可能性をチェック"
+    fi
+    if [ "$SWAP_USAGE" != "0B" ] && [ -n "$SWAP_USAGE" ]; then
+        echo "     - ⚠️ Swap使用中: パフォーマンス改善のためメモリ増設を検討"
+    fi
 fi
 
 # 監視強化の提案（長期履歴対応版）
@@ -939,6 +1021,13 @@ ERROR_ARCHIVE_ENTRY=$(cat << EOF
     "ssh_connections": $((TOTAL_CONTAINERS + 8)),
     "ssh_connections_saved": $((TOTAL_CONTAINERS * 2 + 2)),
     "containers_analyzed": $TOTAL_CONTAINERS
+  },
+  "resource_status": {
+    "load_average": "${LOAD_AVG:-0}",
+    "memory_usage_pct": ${MEM_USAGE_PCT:-0},
+    "swap_in_use": "${SWAP_USAGE:-0B}",
+    "disk_usage_pct": ${DISK_USAGE:-0},
+    "resource_warning": ${RESOURCE_WARNING:-false}
   }
 }
 EOF
