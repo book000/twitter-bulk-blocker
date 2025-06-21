@@ -1,0 +1,471 @@
+#!/usr/bin/env python3
+"""
+Cinnamon Server Authentication Error Monitor - Enhanced Version
+認証エラーに特化した詳細監視・分析ツール
+"""
+
+import subprocess
+import json
+import re
+from datetime import datetime, timedelta
+from collections import defaultdict, Counter
+from typing import Dict, List, Tuple, Optional, Set
+import pytz
+import os
+import sys
+
+# ANSIカラーコード
+class Colors:
+    RESET = '\033[0m'
+    BOLD = '\033[1m'
+    RED = '\033[91m'
+    GREEN = '\033[92m'
+    YELLOW = '\033[93m'
+    BLUE = '\033[94m'
+    MAGENTA = '\033[95m'
+    CYAN = '\033[96m'
+    WHITE = '\033[97m'
+    GRAY = '\033[90m'
+    BG_RED = '\033[101m'
+    BG_YELLOW = '\033[103m'
+    BG_GREEN = '\033[102m'
+    BG_BLUE = '\033[104m'
+
+class AuthenticationMonitor:
+    def __init__(self):
+        self.jst = pytz.timezone('Asia/Tokyo')
+        self.auth_errors = defaultdict(list)
+        self.cookie_reloads = defaultdict(list)
+        self.retry_attempts = defaultdict(list)
+        self.service_status = {}
+        self.error_patterns = {
+            'auth_token': r'auth_token|authorization|unauthorized|401',
+            'cookie_invalid': r'cookie.*invalid|cookie.*expired|cookie.*missing',
+            'csrf_token': r'csrf.*token|x-csrf-token',
+            'session_expired': r'session.*expired|session.*invalid',
+            'rate_limit_auth': r'rate.*limit.*auth|too.*many.*auth',
+            'forbidden': r'forbidden|403.*auth|access.*denied'
+        }
+        
+    def run_ssh_command(self, command: str) -> str:
+        """SSHコマンドを実行"""
+        try:
+            result = subprocess.run(
+                ['ssh', 'Cinnamon', command],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            return result.stdout
+        except subprocess.TimeoutExpired:
+            return ""
+        except Exception as e:
+            print(f"{Colors.RED}SSH接続エラー: {e}{Colors.RESET}")
+            return ""
+
+    def analyze_auth_errors(self, hours: int = 24) -> Dict:
+        """認証エラーの詳細分析"""
+        print(f"{Colors.CYAN}🔐 認証エラー分析中 (過去{hours}時間)...{Colors.RESET}")
+        
+        # 各サービスのログを取得
+        services = ['twitter-blocker-1', 'twitter-blocker-2', 'twitter-blocker-3']
+        
+        for service in services:
+            # systemdログから認証エラーを抽出
+            command = f"sudo journalctl -u {service} --since='{hours} hours ago' --no-pager"
+            logs = self.run_ssh_command(command)
+            
+            if logs:
+                self._parse_auth_errors(logs, service)
+        
+        # ファイルベースログも確認
+        self._analyze_file_logs(hours)
+        
+        return self._generate_auth_report()
+    
+    def _parse_auth_errors(self, logs: str, service: str):
+        """ログから認証エラーを抽出"""
+        lines = logs.split('\n')
+        
+        for line in lines:
+            line_lower = line.lower()
+            
+            # 各種認証エラーパターンをチェック
+            for error_type, pattern in self.error_patterns.items():
+                if re.search(pattern, line_lower):
+                    timestamp = self._extract_timestamp(line)
+                    self.auth_errors[service].append({
+                        'time': timestamp,
+                        'type': error_type,
+                        'message': line.strip()
+                    })
+            
+            # Cookie再読み込み検出
+            if 'reloading cookie' in line_lower or 'cookie reload' in line_lower:
+                timestamp = self._extract_timestamp(line)
+                success = 'success' in line_lower or 'loaded' in line_lower
+                self.cookie_reloads[service].append({
+                    'time': timestamp,
+                    'success': success,
+                    'message': line.strip()
+                })
+            
+            # リトライ検出
+            if 'retry' in line_lower and ('auth' in line_lower or 'cookie' in line_lower):
+                timestamp = self._extract_timestamp(line)
+                self.retry_attempts[service].append({
+                    'time': timestamp,
+                    'message': line.strip()
+                })
+    
+    def _analyze_file_logs(self, hours: int):
+        """ファイルベースのログを分析"""
+        log_files = [
+            '/home/ope/logs/twitter_blocker.log',
+            '/home/ope/logs/twitter_errors.log'
+        ]
+        
+        for log_file in log_files:
+            command = f"tail -n 10000 {log_file} 2>/dev/null | grep -i -E 'auth|cookie|csrf|401|403|forbidden'"
+            logs = self.run_ssh_command(command)
+            
+            if logs:
+                self._parse_auth_errors(logs, 'file_logs')
+    
+    def _extract_timestamp(self, line: str) -> Optional[datetime]:
+        """ログ行からタイムスタンプを抽出"""
+        # systemdログ形式
+        match = re.search(r'(\w{3} \d{2} \d{2}:\d{2}:\d{2})', line)
+        if match:
+            try:
+                # 現在の年を追加
+                year = datetime.now().year
+                time_str = f"{year} {match.group(1)}"
+                return datetime.strptime(time_str, "%Y %b %d %H:%M:%S")
+            except:
+                pass
+        
+        # ISO形式
+        match = re.search(r'(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})', line)
+        if match:
+            try:
+                return datetime.fromisoformat(match.group(1).replace(' ', 'T'))
+            except:
+                pass
+        
+        return None
+    
+    def _generate_auth_report(self) -> Dict:
+        """認証エラーレポートを生成"""
+        report = {
+            'summary': {},
+            'details': {},
+            'recommendations': []
+        }
+        
+        # サマリー生成
+        total_errors = sum(len(errors) for errors in self.auth_errors.values())
+        total_reloads = sum(len(reloads) for reloads in self.cookie_reloads.values())
+        successful_reloads = sum(
+            sum(1 for r in reloads if r['success']) 
+            for reloads in self.cookie_reloads.values()
+        )
+        
+        report['summary'] = {
+            'total_auth_errors': total_errors,
+            'total_cookie_reloads': total_reloads,
+            'successful_reloads': successful_reloads,
+            'reload_success_rate': (successful_reloads / total_reloads * 100) if total_reloads > 0 else 0,
+            'services_affected': list(self.auth_errors.keys())
+        }
+        
+        # 詳細分析
+        for service in set(list(self.auth_errors.keys()) + list(self.cookie_reloads.keys())):
+            service_report = {
+                'error_count': len(self.auth_errors.get(service, [])),
+                'error_types': Counter(e['type'] for e in self.auth_errors.get(service, [])),
+                'reload_count': len(self.cookie_reloads.get(service, [])),
+                'reload_success_rate': self._calculate_reload_success_rate(service),
+                'retry_count': len(self.retry_attempts.get(service, [])),
+                'last_error': self._get_last_error(service),
+                'error_frequency': self._calculate_error_frequency(service)
+            }
+            report['details'][service] = service_report
+        
+        # 推奨アクション生成
+        report['recommendations'] = self._generate_recommendations(report)
+        
+        return report
+    
+    def _calculate_reload_success_rate(self, service: str) -> float:
+        """Cookie再読み込みの成功率を計算"""
+        reloads = self.cookie_reloads.get(service, [])
+        if not reloads:
+            return 0.0
+        
+        successful = sum(1 for r in reloads if r['success'])
+        return (successful / len(reloads)) * 100
+    
+    def _get_last_error(self, service: str) -> Optional[Dict]:
+        """最後のエラー情報を取得"""
+        errors = self.auth_errors.get(service, [])
+        if not errors:
+            return None
+        
+        # タイムスタンプでソート
+        sorted_errors = sorted(errors, key=lambda x: x['time'] or datetime.min)
+        if sorted_errors:
+            return sorted_errors[-1]
+        return None
+    
+    def _calculate_error_frequency(self, service: str) -> Dict:
+        """エラー頻度を計算"""
+        errors = self.auth_errors.get(service, [])
+        if not errors:
+            return {'hourly_avg': 0, 'peak_hour': None, 'peak_count': 0}
+        
+        # 時間別カウント
+        hourly_counts = defaultdict(int)
+        for error in errors:
+            if error['time']:
+                hour = error['time'].replace(minute=0, second=0, microsecond=0)
+                hourly_counts[hour] += 1
+        
+        if not hourly_counts:
+            return {'hourly_avg': 0, 'peak_hour': None, 'peak_count': 0}
+        
+        avg_count = sum(hourly_counts.values()) / len(hourly_counts)
+        peak_hour = max(hourly_counts, key=hourly_counts.get)
+        peak_count = hourly_counts[peak_hour]
+        
+        return {
+            'hourly_avg': avg_count,
+            'peak_hour': peak_hour,
+            'peak_count': peak_count
+        }
+    
+    def _generate_recommendations(self, report: Dict) -> List[Dict]:
+        """推奨アクションを生成"""
+        recommendations = []
+        
+        # 高頻度エラーチェック
+        if report['summary']['total_auth_errors'] > 50:
+            recommendations.append({
+                'level': 'CRITICAL',
+                'action': 'Cookie即時更新推奨',
+                'reason': f"過去24時間で{report['summary']['total_auth_errors']}件の認証エラー",
+                'command': 'cd ~/twitter-bulk-blocker && python3 -m twitter_blocker.update_cookies'
+            })
+        
+        # 低成功率チェック
+        if report['summary']['reload_success_rate'] < 50 and report['summary']['total_cookie_reloads'] > 5:
+            recommendations.append({
+                'level': 'WARNING',
+                'action': 'Cookie品質確認',
+                'reason': f"Cookie再読み込み成功率が{report['summary']['reload_success_rate']:.1f}%と低い",
+                'command': 'python3 -m twitter_blocker.validate_cookies'
+            })
+        
+        # サービス別チェック
+        for service, details in report['details'].items():
+            if details['error_count'] > 20:
+                recommendations.append({
+                    'level': 'WARNING',
+                    'action': f'{service}のサービス再起動検討',
+                    'reason': f"{service}で{details['error_count']}件のエラー",
+                    'command': f'sudo systemctl restart {service}'
+                })
+        
+        return recommendations
+    
+    def display_report(self, report: Dict):
+        """レポートを視覚的に表示"""
+        print(f"\n{Colors.BOLD}{Colors.CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{Colors.RESET}")
+        print(f"{Colors.BOLD}{Colors.CYAN}🔐 認証エラー詳細監視レポート{Colors.RESET}")
+        print(f"{Colors.BOLD}{Colors.CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{Colors.RESET}")
+        
+        # サマリー表示
+        summary = report['summary']
+        print(f"\n{Colors.BOLD}📊 サマリー{Colors.RESET}")
+        
+        # エラー状態の評価
+        if summary['total_auth_errors'] == 0:
+            status_color = Colors.GREEN
+            status_icon = "✅"
+            status_text = "正常"
+        elif summary['total_auth_errors'] < 10:
+            status_color = Colors.YELLOW
+            status_icon = "⚠️"
+            status_text = "注意"
+        else:
+            status_color = Colors.RED
+            status_icon = "🚨"
+            status_text = "異常"
+        
+        print(f"{status_icon} 認証状態: {status_color}{status_text}{Colors.RESET}")
+        print(f"   総認証エラー数: {summary['total_auth_errors']}件")
+        print(f"   Cookie再読み込み: {summary['total_cookie_reloads']}回")
+        print(f"   再読み込み成功率: {summary['reload_success_rate']:.1f}%")
+        print(f"   影響サービス: {', '.join(summary['services_affected']) if summary['services_affected'] else 'なし'}")
+        
+        # サービス別詳細
+        print(f"\n{Colors.BOLD}🔍 サービス別詳細{Colors.RESET}")
+        for service, details in report['details'].items():
+            self._display_service_details(service, details)
+        
+        # 推奨アクション
+        if report['recommendations']:
+            print(f"\n{Colors.BOLD}💡 推奨アクション{Colors.RESET}")
+            for rec in report['recommendations']:
+                level_color = Colors.RED if rec['level'] == 'CRITICAL' else Colors.YELLOW
+                print(f"\n{level_color}[{rec['level']}]{Colors.RESET} {rec['action']}")
+                print(f"   理由: {rec['reason']}")
+                print(f"   実行コマンド: {Colors.CYAN}{rec['command']}{Colors.RESET}")
+        
+        # タイムライン表示
+        self._display_timeline()
+    
+    def _display_service_details(self, service: str, details: Dict):
+        """サービス別詳細を表示"""
+        print(f"\n{Colors.BOLD}{service}:{Colors.RESET}")
+        
+        # エラー情報
+        if details['error_count'] > 0:
+            print(f"  {Colors.RED}❌ エラー: {details['error_count']}件{Colors.RESET}")
+            
+            # エラータイプ分布
+            if details['error_types']:
+                print(f"     エラー種別:")
+                for error_type, count in details['error_types'].most_common():
+                    print(f"       - {error_type}: {count}件")
+            
+            # 最終エラー
+            if details['last_error']:
+                last_error = details['last_error']
+                if last_error['time']:
+                    time_str = last_error['time'].strftime("%H:%M:%S")
+                    print(f"     最終エラー: {time_str}")
+            
+            # エラー頻度
+            freq = details['error_frequency']
+            if freq['hourly_avg'] > 0:
+                print(f"     平均頻度: {freq['hourly_avg']:.1f}件/時")
+                if freq['peak_hour']:
+                    peak_str = freq['peak_hour'].strftime("%H時")
+                    print(f"     ピーク時間: {peak_str} ({freq['peak_count']}件)")
+        else:
+            print(f"  {Colors.GREEN}✅ エラーなし{Colors.RESET}")
+        
+        # Cookie再読み込み情報
+        if details['reload_count'] > 0:
+            success_rate = details['reload_success_rate']
+            rate_color = Colors.GREEN if success_rate > 80 else Colors.YELLOW if success_rate > 50 else Colors.RED
+            print(f"  🔄 Cookie再読み込み: {details['reload_count']}回")
+            print(f"     成功率: {rate_color}{success_rate:.1f}%{Colors.RESET}")
+        
+        # リトライ情報
+        if details['retry_count'] > 0:
+            print(f"  🔁 リトライ: {details['retry_count']}回")
+    
+    def _display_timeline(self):
+        """エラータイムラインを表示"""
+        print(f"\n{Colors.BOLD}📈 エラータイムライン (直近10件){Colors.RESET}")
+        
+        # 全エラーを時系列でマージ
+        all_events = []
+        
+        for service, errors in self.auth_errors.items():
+            for error in errors[-5:]:  # 各サービスから最新5件
+                if error['time']:
+                    all_events.append({
+                        'time': error['time'],
+                        'service': service,
+                        'type': 'error',
+                        'detail': error['type']
+                    })
+        
+        for service, reloads in self.cookie_reloads.items():
+            for reload in reloads[-3:]:  # 各サービスから最新3件
+                if reload['time']:
+                    all_events.append({
+                        'time': reload['time'],
+                        'service': service,
+                        'type': 'reload',
+                        'detail': 'success' if reload['success'] else 'failed'
+                    })
+        
+        # 時系列でソート
+        all_events.sort(key=lambda x: x['time'], reverse=True)
+        
+        # 最新10件を表示
+        for event in all_events[:10]:
+            time_str = event['time'].strftime("%H:%M:%S")
+            
+            if event['type'] == 'error':
+                icon = "❌"
+                color = Colors.RED
+                desc = f"認証エラー ({event['detail']})"
+            else:
+                if event['detail'] == 'success':
+                    icon = "✅"
+                    color = Colors.GREEN
+                    desc = "Cookie再読み込み成功"
+                else:
+                    icon = "❌"
+                    color = Colors.YELLOW
+                    desc = "Cookie再読み込み失敗"
+            
+            print(f"  {time_str} {icon} {color}{event['service']}{Colors.RESET}: {desc}")
+    
+    def monitor_realtime(self, interval: int = 60):
+        """リアルタイム監視モード"""
+        print(f"{Colors.BOLD}{Colors.CYAN}🔄 リアルタイム認証監視モード開始 (更新間隔: {interval}秒){Colors.RESET}")
+        print(f"{Colors.GRAY}Ctrl+Cで終了{Colors.RESET}\n")
+        
+        try:
+            while True:
+                # 画面クリア
+                os.system('clear')
+                
+                # 最新データ取得・分析
+                report = self.analyze_auth_errors(hours=1)  # 直近1時間
+                
+                # レポート表示
+                self.display_report(report)
+                
+                # 次回更新までカウントダウン
+                print(f"\n{Colors.GRAY}次回更新まで: ", end='', flush=True)
+                for i in range(interval, 0, -1):
+                    print(f"\r{Colors.GRAY}次回更新まで: {i}秒  ", end='', flush=True)
+                    time.sleep(1)
+                
+        except KeyboardInterrupt:
+            print(f"\n\n{Colors.YELLOW}監視を終了しました{Colors.RESET}")
+
+def main():
+    """メイン実行関数"""
+    monitor = AuthenticationMonitor()
+    
+    # コマンドライン引数処理
+    if len(sys.argv) > 1:
+        if sys.argv[1] == '--realtime':
+            interval = int(sys.argv[2]) if len(sys.argv) > 2 else 60
+            monitor.monitor_realtime(interval)
+        elif sys.argv[1] == '--hours':
+            hours = int(sys.argv[2]) if len(sys.argv) > 2 else 24
+            report = monitor.analyze_auth_errors(hours)
+            monitor.display_report(report)
+        else:
+            print(f"使用方法: {sys.argv[0]} [--realtime [秒]] [--hours [時間]]")
+    else:
+        # デフォルト: 24時間分析
+        report = monitor.analyze_auth_errors(24)
+        monitor.display_report(report)
+        
+        # 重大なエラーがある場合は終了コード1
+        if report['summary']['total_auth_errors'] > 50:
+            sys.exit(1)
+
+if __name__ == "__main__":
+    import time
+    main()
