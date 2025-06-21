@@ -22,6 +22,7 @@ class RetryManager:
 
     # HTTPステータスコードによるリトライ対象
     RETRYABLE_STATUS_CODES = [
+        403,  # Forbidden (Twitter API一時的制限、Unknown error含む)
         429,  # Rate limit
         500,  # Internal server error
         502,  # Bad gateway
@@ -35,6 +36,7 @@ class RetryManager:
         "rate limit",
         "timeout",
         "server error",
+        "unknown error",  # Twitter API 403 Unknown error
     ]
 
     MAX_RETRIES = 10
@@ -80,6 +82,11 @@ class RetryManager:
 
         return False
 
-    def get_retry_delay(self, retry_count: int, base_delay: int = 30) -> int:
+    def get_retry_delay(self, retry_count: int, base_delay: int = 30, status_code: int = None, error_message: str = "") -> int:
         """リトライ間隔を計算（指数バックオフ）"""
+        # Twitter API 403 Unknown errorの場合は長めの間隔
+        if status_code == 403 and "unknown error" in error_message.lower():
+            return base_delay * 3 * (2**retry_count)  # 通常の3倍の間隔
+        
+        # その他のエラーは通常の指数バックオフ
         return base_delay * (2**retry_count)

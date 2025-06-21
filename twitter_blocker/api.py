@@ -75,13 +75,16 @@ class HeaderEnhancer:
     
     def get_enhanced_headers(self) -> Dict[str, str]:
         """
-        拡張ヘッダーの辞書を取得
+        拡張ヘッダーの辞書を取得（Unknown error対策強化版）
         
         Returns:
             拡張ヘッダーの辞書
         """
         headers = {
-            "x-client-transaction-id": self.get_transaction_id()
+            "x-client-transaction-id": self.get_transaction_id(),
+            # Unknown error対策：追加のアンチボットヘッダー
+            "x-client-uuid": self._generate_client_uuid(),
+            "x-request-id": self._generate_request_id(),
         }
         
         forwarded_for = self.get_forwarded_for()
@@ -89,6 +92,19 @@ class HeaderEnhancer:
             headers["x-xp-forwarded-for"] = forwarded_for
             
         return headers
+    
+    def _generate_client_uuid(self) -> str:
+        """クライアントUUIDを生成（セッション中は固定）"""
+        if not hasattr(self, '_client_uuid'):
+            self._client_uuid = ''.join(random.choices('0123456789abcdef-', k=36))
+        return self._client_uuid
+    
+    def _generate_request_id(self) -> str:
+        """リクエストIDを生成（リクエスト毎に変化）"""
+        import time
+        timestamp = int(time.time() * 1000)
+        random_part = random.randint(100000, 999999)
+        return f"{timestamp}-{random_part}"
 
 
 class TwitterAPI:
