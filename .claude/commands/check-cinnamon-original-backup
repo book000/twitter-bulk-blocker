@@ -306,53 +306,6 @@ fi
 AUTH_ERRORS=$AUTH_ERRORS_5M  # 後続処理との互換性維持
 echo
 
-# 履歴トレンド分析の追加
-echo "📈 HISTORICAL TREND ANALYSIS (履歴トレンド分析)"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-# 前回実行の履歴ファイルを確認
-HISTORY_FILE="/tmp/cinnamon-history-trend.json"
-if [ -f "$HISTORY_FILE" ]; then
-    PREV_RUNNING=$(jq -r '.containers.running // 0' "$HISTORY_FILE" 2>/dev/null || echo "0")
-    PREV_STOPPED=$(jq -r '.containers.stopped // 0' "$HISTORY_FILE" 2>/dev/null || echo "0")
-    PREV_TIMESTAMP=$(jq -r '.timestamp // "unknown"' "$HISTORY_FILE" 2>/dev/null || echo "unknown")
-    
-    echo "📊 前回チェックとの比較（$PREV_TIMESTAMP）:"
-    
-    # 稼働状態の変化
-    if [ "$RUNNING_COUNT" -gt "$PREV_RUNNING" ]; then
-        echo "  ✅ 稼働コンテナ増加: $PREV_RUNNING → $RUNNING_COUNT (+$((RUNNING_COUNT - PREV_RUNNING)))"
-    elif [ "$RUNNING_COUNT" -lt "$PREV_RUNNING" ]; then
-        echo "  ⚠️ 稼働コンテナ減少: $PREV_RUNNING → $RUNNING_COUNT (-$((PREV_RUNNING - RUNNING_COUNT)))"
-    else
-        echo "  ➡️ 稼働コンテナ数維持: $RUNNING_COUNT"
-    fi
-    
-    if [ "$STOPPED_COUNT" != "$PREV_STOPPED" ]; then
-        echo "  📍 停止コンテナ変化: $PREV_STOPPED → $STOPPED_COUNT"
-    fi
-else
-    echo "ℹ️ 初回実行のため履歴比較なし"
-fi
-
-# 現在の状態を履歴として保存
-cat > "$HISTORY_FILE" << EOF
-{
-  "timestamp": "$(date '+%Y-%m-%d %H:%M:%S')",
-  "containers": {
-    "running": $RUNNING_COUNT,
-    "stopped": $STOPPED_COUNT
-  },
-  "auth_errors": {
-    "5min": $AUTH_ERRORS_5M,
-    "1hour": $AUTH_ERRORS_1H,
-    "24hour": $AUTH_ERRORS_24H
-  }
-}
-EOF
-
-echo
-
 # 5. 即座のアクション提示（対応が必要な問題の明確化）
 echo "💡 RECOMMENDED ACTIONS (即座のアクション提示)"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

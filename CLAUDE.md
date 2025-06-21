@@ -157,10 +157,10 @@ python3 -m twitter_blocker --all --disable-header-enhancement  # 緊急時無効
 |------|------------|----------|----------|
 | **🚀 超高速チェック** | 最小版 | `.claude/commands/check-cinnamon-minimal` | 3-5秒 |
 | **⚡ 高速監視** | 高速版 | `.claude/commands/check-cinnamon-fast` | 10-15秒 |
-| **📊 通常監視** | 最適化版 | `.claude/commands/check-cinnamon-optimized` | 15-20秒 |
-| **🔍 詳細分析** | 包括的分析 | `.claude/commands/check-cinnamon` | 60秒+ |
-| **🆕 長期履歴分析** | 包括的分析 | `.claude/commands/check-cinnamon` | 60秒+ |
-| **🔄 自己改善・最適化** | 包括的分析 | `.claude/commands/check-cinnamon` | 60秒+ |
+| **⚡ 高速監視（推奨）** | 最適化版 | `.claude/commands/check-cinnamon` | **3秒** |
+| **🔍 詳細分析** | 包括的分析（旧版） | `.claude/commands/check-cinnamon-original-backup` | 60秒+ |
+| **🆕 長期履歴分析** | 高速化版で対応 | `.claude/commands/check-cinnamon` | **3秒** |
+| **🔄 自己改善・最適化** | 高速化版で対応 | `.claude/commands/check-cinnamon` | **3秒** |
 | **Claude Code標準** | AI最適化版 | `cinnamon-logs-ai-optimized.sh` | 30秒 |
 | **問題詳細調査** | AI最適化版 | `cinnamon-logs-ai-optimized.sh` | 30秒 |
 | **基本チェック** | 統合インターフェース | `cinnamon-monitor-suite.sh basic` | 20秒 |
@@ -173,9 +173,13 @@ python3 -m twitter_blocker --all --disable-header-enhancement  # 緊急時無効
 .claude/commands/check-cinnamon-fast       # 10-15秒: 頻繁な監視用
 .claude/commands/check-cinnamon-optimized  # 15-20秒: 通常監視（推奨）
 
-# 🔄 自己改善型包括分析（詳細調査時）
+# ⚡ 高速化包括分析（メイン・推奨）
 .claude/commands/check-cinnamon
-# 特徴: 24時間エラー履歴、実行メタデータ収集、自動改善提案
+# 特徴: 74秒→3秒（23.9倍高速化）、SSH接続1回化、全機能維持
+
+# 🔄 従来版包括分析（詳細調査・比較用）
+.claude/commands/check-cinnamon-original-backup
+# 特徴: 24時間エラー履歴、実行メタデータ収集、自動改善提案（74秒）
 
 # AI最適化版での問題特定・修正提案
 .claude/cinnamon-logs-ai-optimized.sh
