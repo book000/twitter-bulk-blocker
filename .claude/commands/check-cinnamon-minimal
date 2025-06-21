@@ -1,39 +1,32 @@
 #!/bin/bash
 
-# check-cinnamon-minimal - 最小限監視コマンド（5秒以内実行）
-# 最重要情報のみを最速で取得
+# check-cinnamon-minimal - 最小版Cinnamonサーバー監視
+# 3-5秒実行を目標とした最小限のヘルスチェック
 
-echo "=== CINNAMON MINIMAL CHECK $(date '+%H:%M:%S') ==="
+set -e
 
-# 1回のSSH接続で全データ取得
-DATA=$(ssh -o ConnectTimeout=3 -o ServerAliveInterval=2 Cinnamon '
-# コンテナ状態
-RUNNING=$(docker ps --filter "name=bulk-block-users" -q | wc -l)
-STOPPED=$(docker ps -a --filter "name=bulk-block-users" --filter "status=exited" -q | wc -l)
-echo "Containers: Running=$RUNNING Stopped=$STOPPED"
+echo "=== CINNAMON MINIMAL CHECK ==="
+echo "$(date '+%H:%M:%S') - ヘルスチェック実行中..."
 
-# 最新エラー（1件のみ）
-LAST_ERROR=$(find /var/log/supervisor -name "*.log" -mmin -60 -exec grep -l "ERROR\|認証エラー" {} \; 2>/dev/null | head -1)
-if [ -n "$LAST_ERROR" ]; then
-    echo "LastError: $(basename $LAST_ERROR)"
+# 単一SSH接続で最小限のデータ取得
+RESULT=$(ssh Cinnamon "
+echo -n 'Running: '
+docker ps --filter 'name=bulk-block-users' --format '{{.Names}}' | wc -l | tr -d '\n'
+echo -n ' | Stopped: '
+docker ps -a --filter 'name=bulk-block-users' --filter 'status=exited' --format '{{.Names}}' | wc -l | tr -d '\n'
+echo -n ' | Auth errors (5m): '
+docker logs --since '5m' \$(docker ps -aq --filter 'name=bulk-block-users') 2>/dev/null | grep -ci '認証エラー' || echo '0'
+" 2>/dev/null)
+
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "📊 $RESULT"
+
+# 結果判定
+if echo "$RESULT" | grep -q "Stopped: [1-9]"; then
+    echo "🚨 停止サービスあり - 詳細確認が必要"
+elif echo "$RESULT" | grep -q "Auth errors.*: [1-9]"; then
+    echo "⚠️ 認証エラー検出 - Cookie確認推奨"
 else
-    echo "LastError: None"
+    echo "✅ システム正常"
 fi
-
-# システム負荷
-echo "Load: $(uptime | awk -F"load average:" "{print \$2}" | xargs)"
-' 2>/dev/null)
-
-# 結果表示
-if [ -n "$DATA" ]; then
-    echo "$DATA"
-    
-    # 停止コンテナがある場合のみ警告
-    if echo "$DATA" | grep -q "Stopped=[1-9]"; then
-        echo "⚠️ ACTION REQUIRED: Containers stopped!"
-    else
-        echo "✅ Status: OK"
-    fi
-else
-    echo "❌ Connection failed"
-fi
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
