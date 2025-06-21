@@ -60,7 +60,7 @@ class RetryManager:
             return True
 
         # HTTPステータスコードによる判定
-        if status_code in self.RETRYABLE_STATUS_CODES:
+        if status_code and status_code in self.RETRYABLE_STATUS_CODES:
             return True
 
         # エラーメッセージによる判定
@@ -69,6 +69,14 @@ class RetryManager:
             for msg in self.RETRYABLE_MESSAGES:
                 if msg in error_lower:
                     return True
+            
+            # 日本語エラーメッセージの判定
+            if "ユーザー情報取得失敗" in error_message:
+                return True
+
+        # status_codeがNullで特定のエラーパターンでない場合はリトライ対象
+        if status_code is None and error_message and "permanent" not in error_message.lower():
+            return True
 
         return False
 

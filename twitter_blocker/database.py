@@ -242,10 +242,12 @@ class DatabaseManager:
             AND (
                 user_status IN ('unavailable') OR
                 response_code IN (429, 500, 502, 503, 504) OR
+                response_code IS NULL OR
                 error_message LIKE '%temporarily%' OR
                 error_message LIKE '%rate limit%' OR
                 error_message LIKE '%timeout%' OR
-                error_message LIKE '%server error%'
+                error_message LIKE '%server error%' OR
+                error_message LIKE '%ユーザー情報取得失敗%'
             )
             ORDER BY last_retry_at ASC
         """
