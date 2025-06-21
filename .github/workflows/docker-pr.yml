@@ -1,0 +1,118 @@
+name: Docker PR Build
+
+on:
+  pull_request:
+    branches:
+      - master
+      - main
+    paths:
+      - 'Dockerfile'
+      - 'twitter_blocker/**'
+      - 'requirements.txt'
+      - '.github/workflows/docker-pr.yml'
+
+jobs:
+  docker-build-test:
+    name: Docker Build Test
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Prepare build metadata
+        id: meta
+        run: |
+          # PRビルド用のバージョン情報
+          PR_VERSION=$(python3 -c "
+          import twitter_blocker.version as v
+          git_info = v.get_git_info()
+          base_version = v.__version__
+          if git_info['commit_short']:
+            version = f'{base_version}-pr${{ github.event.number }}-{git_info[\"commit_short\"]}'
+            if git_info['dirty']:
+              version += '-dirty'
+            print(version)
+          else:
+            print(f'{base_version}-pr${{ github.event.number }}')
+          ")
+          
+          echo "version=${PR_VERSION}" >> $GITHUB_OUTPUT
+          echo "build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_OUTPUT
+          echo "commit_sha=${{ github.sha }}" >> $GITHUB_OUTPUT
+          echo "commit_short=${GITHUB_SHA:0:8}" >> $GITHUB_OUTPUT
+          
+          echo "## 🔍 PR Docker Build Test" >> $GITHUB_STEP_SUMMARY
+          echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| PR Number | #${{ github.event.number }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Version | \`${PR_VERSION}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | \`${GITHUB_SHA:0:8}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build Date | $(date -u +%Y-%m-%dT%H:%M:%SZ) |" >> $GITHUB_STEP_SUMMARY
+      
+      - name: Build Docker image (no push)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64
+          push: false
+          tags: |
+            twitter-bulk-blocker:pr-${{ github.event.number }}
+            twitter-bulk-blocker:${{ steps.meta.outputs.version }}
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+            BUILD_DATE=${{ steps.meta.outputs.build_date }}
+            COMMIT_SHA=${{ steps.meta.outputs.commit_sha }}
+            COMMIT_SHORT=${{ steps.meta.outputs.commit_short }}
+          labels: |
+            org.opencontainers.image.title=Twitter Bulk Blocker (PR Build)
+            org.opencontainers.image.description=PR build for testing Docker functionality
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+            org.opencontainers.image.created=${{ steps.meta.outputs.build_date }}
+            org.opencontainers.image.revision=${{ steps.meta.outputs.commit_sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.url=${{ github.server_url }}/${{ github.repository }}
+      
+      - name: Test Docker image
+        run: |
+          echo "## 🧪 Docker Image Test Results" >> $GITHUB_STEP_SUMMARY
+          
+          # イメージが正常にビルドされたかチェック
+          if docker images twitter-bulk-blocker:pr-${{ github.event.number }} --format "table {{.Repository}}:{{.Tag}}\t{{.Size}}\t{{.CreatedAt}}" | grep -q twitter-bulk-blocker; then
+            echo "✅ Docker image built successfully" >> $GITHUB_STEP_SUMMARY
+            
+            # バージョン情報のテスト
+            echo "### Version Information" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            docker run --rm twitter-bulk-blocker:pr-${{ github.event.number }} --version >> $GITHUB_STEP_SUMMARY 2>&1 || echo "Version command failed" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            
+            # ヘルプ表示のテスト
+            echo "### Help Output Test" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            timeout 10 docker run --rm twitter-bulk-blocker:pr-${{ github.event.number }} --help >> $GITHUB_STEP_SUMMARY 2>&1 || echo "Help command timed out or failed" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            
+            # メタデータのテスト
+            echo "### Image Metadata" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            docker inspect twitter-bulk-blocker:pr-${{ github.event.number }} --format='{{json .Config.Labels}}' | jq . >> $GITHUB_STEP_SUMMARY 2>&1 || echo "Metadata extraction failed" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Docker image build failed" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+      
+      - name: Cleanup
+        if: always()
+        run: |
+          # テスト用イメージの削除
+          docker rmi twitter-bulk-blocker:pr-${{ github.event.number }} || true
+          docker rmi twitter-bulk-blocker:${{ steps.meta.outputs.version }} || true
+          
+          echo "🧹 Cleanup completed" >> $GITHUB_STEP_SUMMARY
