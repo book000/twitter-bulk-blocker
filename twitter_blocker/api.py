@@ -7,12 +7,13 @@ import random
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import pytz
 import requests
 
 from .config import CookieManager
+from .retry import RetryManager
 
 
 class HeaderEnhancer:
@@ -28,6 +29,88 @@ class HeaderEnhancer:
         self.enable_forwarded_for = enable_forwarded_for
         self._transaction_counter = random.randint(1000, 9999)
         self._session_ip = self._generate_session_ip() if enable_forwarded_for else None
+        
+        # 効果測定用のデータ
+        self.header_stats = {
+            "total_requests": 0,
+            "enhanced_requests": 0,
+            "success_rate_enhanced": 0.0,
+            "success_rate_basic": 0.0,
+            "recent_results": [],  # (timestamp, enhanced, success)
+            "quality_score": 0.5,  # 0.0-1.0
+        }
+        self._max_results_history = 100
+        
+    def record_request_result(self, enhanced: bool, success: bool):
+        """リクエスト結果を記録して効果を測定"""
+        current_time = time.time()
+        
+        # 基本統計を更新
+        self.header_stats["total_requests"] += 1
+        if enhanced:
+            self.header_stats["enhanced_requests"] += 1
+        
+        # 結果履歴を記録
+        self.header_stats["recent_results"].append((current_time, enhanced, success))
+        
+        # 古い履歴を制限
+        if len(self.header_stats["recent_results"]) > self._max_results_history:
+            self.header_stats["recent_results"] = self.header_stats["recent_results"][-self._max_results_history:]
+        
+        # 成功率を計算
+        self._update_success_rates()
+        
+    def _update_success_rates(self):
+        """拡張ヘッダーあり/なしの成功率を計算"""
+        cutoff_time = time.time() - 600  # 直近10分間
+        recent_results = [
+            result for result in self.header_stats["recent_results"]
+            if result[0] >= cutoff_time
+        ]
+        
+        if not recent_results:
+            return
+        
+        # 拡張ヘッダーありの成功率
+        enhanced_results = [r for r in recent_results if r[1]]  # enhanced=True
+        if enhanced_results:
+            enhanced_success = sum(1 for r in enhanced_results if r[2])  # success=True
+            self.header_stats["success_rate_enhanced"] = enhanced_success / len(enhanced_results)
+        
+        # 基本ヘッダーの成功率
+        basic_results = [r for r in recent_results if not r[1]]  # enhanced=False
+        if basic_results:
+            basic_success = sum(1 for r in basic_results if r[2])  # success=True
+            self.header_stats["success_rate_basic"] = basic_success / len(basic_results)
+        
+        # 品質スコアの計算（拡張ヘッダーの有効性）
+        if enhanced_results and basic_results:
+            improvement = self.header_stats["success_rate_enhanced"] - self.header_stats["success_rate_basic"]
+            self.header_stats["quality_score"] = max(0.0, min(1.0, 0.5 + improvement))
+        elif enhanced_results:
+            # 拡張ヘッダーのみの場合、成功率をスコアとする
+            self.header_stats["quality_score"] = self.header_stats["success_rate_enhanced"]
+    
+    def should_use_enhanced_headers(self) -> bool:
+        """拡張ヘッダーを使用すべきかを判定"""
+        # 十分なデータがない場合はデフォルトで使用
+        if self.header_stats["total_requests"] < 20:
+            return True
+        
+        # 品質スコアが高い場合は継続使用
+        return self.header_stats["quality_score"] >= 0.4
+    
+    def get_effectiveness_report(self) -> Dict[str, Any]:
+        """拡張ヘッダーの効果レポートを取得"""
+        return {
+            "total_requests": self.header_stats["total_requests"],
+            "enhanced_requests": self.header_stats["enhanced_requests"],
+            "success_rate_enhanced": round(self.header_stats["success_rate_enhanced"], 3),
+            "success_rate_basic": round(self.header_stats["success_rate_basic"], 3),
+            "quality_score": round(self.header_stats["quality_score"], 3),
+            "recommendation": "use_enhanced" if self.should_use_enhanced_headers() else "use_basic",
+            "data_points": len(self.header_stats["recent_results"])
+        }
         
     def get_transaction_id(self) -> str:
         """
@@ -167,6 +250,25 @@ class TwitterAPI:
         self._error_window_duration = 1800  # 30分間のエラー監視窓（秒）
         self._max_errors_in_window = 50  # 30分間で50回エラーでCookie再読み込み
         self._max_consecutive_errors = 10  # 連続10回エラーでCookie再読み込み
+        
+        # 強化された403エラー対応
+        self.retry_manager = RetryManager()
+        self._403_error_stats = {
+            "total_403_errors": 0,
+            "classified_errors": {},
+            "recovery_success_rate": 0.0,
+            "adaptive_delays_active": True
+        }
+        
+        # 早期警告システム
+        self.early_warning_system = {
+            "error_spike_threshold": 20,  # 5分間で20回以上で警告
+            "error_rate_threshold": 0.7,  # エラー率70%以上で警告
+            "critical_error_types": ["anti_bot", "ip_blocked", "account_restricted"],
+            "warning_issued": False,
+            "last_warning_time": 0,
+            "warning_cooldown": 600  # 10分間のクールダウン
+        }
 
 
     def get_user_info(self, screen_name: str) -> Optional[Dict[str, Any]]:
@@ -237,10 +339,26 @@ class TwitterAPI:
                     self._save_relationship_to_cache(result["id"], result)
                 # 成功時はエラーカウンターをリセット
                 self._reset_error_counters_on_success()
+                
+                # 拡張ヘッダーの効果測定　
+                if self.header_enhancer:
+                    self.header_enhancer.record_request_result(
+                        enhanced=self.enable_header_enhancement,
+                        success=True
+                    )
+                
                 return result
 
             # ステータスコード別のエラー表示
-            error_msg = self._get_detailed_error_message(response, screen_name)
+            error_msg, error_classification = self._get_detailed_error_message(response, screen_name)
+            
+            # 拡張ヘッダーの効果測定
+            if self.header_enhancer:
+                self.header_enhancer.record_request_result(
+                    enhanced=self.enable_header_enhancement,
+                    success=False
+                )
+            
             print(f"ユーザー情報取得失敗 ({screen_name}): {error_msg}")
             
             # エラー多発チェック
@@ -324,7 +442,15 @@ class TwitterAPI:
                 return result
 
             # ステータスコード別のエラー表示
-            error_msg = self._get_detailed_error_message(response, user_id)
+            error_msg, error_classification = self._get_detailed_error_message(response, user_id)
+            
+            # 拡張ヘッダーの効果測定
+            if self.header_enhancer:
+                self.header_enhancer.record_request_result(
+                    enhanced=self.enable_header_enhancement,
+                    success=False
+                )
+            
             print(f"ユーザー情報取得失敗 (ID: {user_id}): {error_msg}")
             return None
 
@@ -477,7 +603,15 @@ class TwitterAPI:
                 return self._parse_users_batch_response(response.json(), user_ids)
 
             # ステータスコード別のエラー表示
-            error_msg = self._get_detailed_error_message(response, f"batch({len(user_ids)}users)")
+            error_msg, error_classification = self._get_detailed_error_message(response, f"batch({len(user_ids)}users)")
+            
+            # 拡張ヘッダーの効果測定
+            if self.header_enhancer:
+                self.header_enhancer.record_request_result(
+                    enhanced=self.enable_header_enhancement,
+                    success=False
+                )
+            
             print(f"一括ユーザー情報取得失敗: {error_msg}")
             
             # エラー時は空の辞書を返す
@@ -690,7 +824,15 @@ class TwitterAPI:
                 return self._parse_user_response(response.json(), screen_name)
 
             # エラーの場合
-            error_msg = self._get_detailed_error_message(response, screen_name)
+            error_msg, error_classification = self._get_detailed_error_message(response, screen_name)
+            
+            # 拡張ヘッダーの効果測定
+            if self.header_enhancer:
+                self.header_enhancer.record_request_result(
+                    enhanced=self.enable_header_enhancement,
+                    success=False
+                )
+            
             print(f"  ✗ {screen_name}: {error_msg}")
             return None
 
@@ -737,7 +879,14 @@ class TwitterAPI:
                 return {"success": True, "status_code": 200}
 
             # その他のエラー
-            error_msg = self._get_detailed_error_message(response, f"block {screen_name}")
+            error_msg, error_classification = self._get_detailed_error_message(response, f"block {screen_name}")
+            
+            # 拡張ヘッダーの効果測定
+            if self.header_enhancer:
+                self.header_enhancer.record_request_result(
+                    enhanced=self.enable_header_enhancement,
+                    success=False
+                )
             
             # エラー多発チェック
             if self._track_error_and_check_cookie_reload(f"block {screen_name}", "block"):
@@ -1024,8 +1173,8 @@ class TwitterAPI:
                 else:
                     print(f"  レスポンス詳細取得不可")
 
-    def _get_detailed_error_message(self, response: requests.Response, identifier: str) -> str:
-        """詳細なエラーメッセージを生成"""
+    def _get_detailed_error_message(self, response: requests.Response, identifier: str) -> Tuple[str, Optional[str]]:
+        """詳細なエラーメッセージとエラー分類を生成"""
         status_messages = {
             400: "不正なリクエスト",
             401: "認証エラー（Cookieが無効）",
@@ -1057,15 +1206,39 @@ class TwitterAPI:
         except:
             pass
         
-        # 403エラーの場合、追加情報を提供
+        # 403エラーの詳細分類
         if status_code == 403:
-            # アカウントロックの確認
-            if self._is_account_locked(response):
-                return f"{base_msg} - アカウントがロックされている可能性があります"
-            else:
-                return f"{base_msg} - 詳細はレスポンステキストを確認してください"
+            response_text = ""
+            try:
+                response_text = response.text if hasattr(response, 'text') else ""
+            except:
+                pass
             
-        return base_msg
+            headers = dict(response.headers) if hasattr(response, 'headers') else {}
+            error_type, description, priority = self.retry_manager.error_classifier.classify_403_error(
+                response_text=response_text,
+                headers=headers,
+                status_code=status_code
+            )
+            
+            # 統計更新
+            self._403_error_stats["total_403_errors"] += 1
+            if error_type not in self._403_error_stats["classified_errors"]:
+                self._403_error_stats["classified_errors"][error_type] = 0
+            self._403_error_stats["classified_errors"][error_type] += 1
+            
+            # 早期警告システムのチェック
+            self._check_early_warning_conditions(error_type)
+            
+            # アカウントロックの確認（従来ロジックも保持）
+            if self._is_account_locked(response):
+                detailed_msg = f"{base_msg} - アカウントロック [Type: {error_type}] {description}"
+            else:
+                detailed_msg = f"{base_msg} - [Type: {error_type}] {description} (Priority: {priority})"
+            
+            return detailed_msg, error_type
+            
+        return base_msg, None
 
     def _is_account_locked(self, response: requests.Response) -> bool:
         """アカウントロック状態を検出"""
@@ -1384,6 +1557,131 @@ class TwitterAPI:
             })
         
         return combined_data
+    
+    def get_403_error_report(self) -> Dict[str, Any]:
+        """詳細な403エラー統計レポートを取得"""
+        retry_stats = self.retry_manager.get_error_statistics()
+        
+        return {
+            "total_403_errors": self._403_error_stats["total_403_errors"],
+            "classified_errors": dict(self._403_error_stats["classified_errors"]),
+            "retry_manager_stats": retry_stats,
+            "adaptive_delays_active": self._403_error_stats["adaptive_delays_active"],
+            "header_enhancement_enabled": self.enable_header_enhancement,
+            "header_effectiveness": self.header_enhancer.get_effectiveness_report() if self.header_enhancer else None
+        }
+    
+    def get_comprehensive_error_analysis(self) -> Dict[str, Any]:
+        """包括的なエラー分析レポートを生成"""
+        # 403エラー統計
+        error_403_report = self.get_403_error_report()
+        
+        # ヘッダー効果統計
+        header_report = self.header_enhancer.get_effectiveness_report() if self.header_enhancer else {}
+        
+        # 推奨事項の生成
+        recommendations = []
+        
+        if error_403_report["total_403_errors"] > 50:
+            dominant_error = max(error_403_report["classified_errors"].items(), key=lambda x: x[1])
+            recommendations.append(f"最多エラータイプ: {dominant_error[0]} ({dominant_error[1]}回) - 特別対応が必要")
+        
+        if header_report.get("recommendation") == "use_basic":
+            recommendations.append("拡張ヘッダーの効果が低いため、基本ヘッダーの使用を推奨")
+        elif header_report.get("quality_score", 0) < 0.3:
+            recommendations.append("ヘッダー戦略の見直しが必要")
+        
+        retry_stats = error_403_report.get("retry_manager_stats", {})
+        if retry_stats.get("success_rate", 1.0) < 0.5:
+            recommendations.append("リトライ成功率が低いため、バックオフ戦略の調整が必要")
+        
+        return {
+            "summary": {
+                "total_403_errors": error_403_report["total_403_errors"],
+                "header_quality_score": header_report.get("quality_score", 0),
+                "retry_success_rate": retry_stats.get("success_rate", 0),
+                "analysis_timestamp": datetime.now().isoformat()
+            },
+            "detailed_403_analysis": error_403_report,
+            "header_effectiveness": header_report,
+            "recommendations": recommendations,
+            "urgent_actions_needed": len([r for r in recommendations if "特別対応" in r or "緊急" in r]) > 0
+        }
+    
+    def _check_early_warning_conditions(self, error_classification: str = None) -> bool:
+        """エラーの早期警告条件をチェック"""
+        current_time = time.time()
+        
+        # クールダウン中の場合は警告しない
+        if (current_time - self.early_warning_system["last_warning_time"]) < self.early_warning_system["warning_cooldown"]:
+            return False
+        
+        # エラー統計を取得
+        retry_stats = self.retry_manager.get_error_statistics()
+        
+        # 条件1: エラースパイクの検出
+        if retry_stats["total_attempts"] >= self.early_warning_system["error_spike_threshold"]:
+            print(f"\n⚠️ 早期警告: エラースパイク検出 - 5分間で{retry_stats['total_attempts']}回のエラー")
+            self._issue_early_warning("ERROR_SPIKE", retry_stats)
+            return True
+        
+        # 条件2: エラー率の異常高騰
+        if retry_stats["success_rate"] < (1 - self.early_warning_system["error_rate_threshold"]):
+            print(f"\n⚠️ 早期警告: 高エラー率検出 - 成功率: {retry_stats['success_rate']:.1%}")
+            self._issue_early_warning("HIGH_ERROR_RATE", retry_stats)
+            return True
+        
+        # 条件3: 重大エラータイプの検出
+        if error_classification in self.early_warning_system["critical_error_types"]:
+            print(f"\n🚨 重大警告: 重編エラータイプ検出 - {error_classification}")
+            self._issue_early_warning("CRITICAL_ERROR_TYPE", {"error_type": error_classification})
+            return True
+        
+        return False
+    
+    def _issue_early_warning(self, warning_type: str, details: Dict[str, Any]):
+        """早期警告を発行して対応策を提案"""
+        current_time = time.time()
+        self.early_warning_system["warning_issued"] = True
+        self.early_warning_system["last_warning_time"] = current_time
+        
+        print(f"\n=== 早期警告システム ===\n")
+        print(f"警告タイプ: {warning_type}")
+        print(f"発生時刻: {datetime.fromtimestamp(current_time).strftime('%H:%M:%S')}")
+        
+        if warning_type == "ERROR_SPIKE":
+            print(f"詳細: 5分間で{details['total_attempts']}回のエラーが発生")
+            print("🔧 推奨対応:")
+            print("  1. Cookieの再読み込みを実行")
+            print("  2. リクエスト率を一時的に低下")
+            print("  3. ヘッダー戦略の切り替えを検討")
+        
+        elif warning_type == "HIGH_ERROR_RATE":
+            print(f"詳細: 成功率が{details['success_rate']:.1%}まで低下")
+            print("🔧 推奨対応:")
+            print("  1. バックオフ時間を延長")
+            print("  2. 同時実行数を減らす")
+            print("  3. APIエンドポイントの変更を検討")
+        
+        elif warning_type == "CRITICAL_ERROR_TYPE":
+            error_type = details.get("error_type", "unknown")
+            print(f"詳細: 重大エラータイプ '{error_type}' が発生")
+            print("🚨 緊急対応:")
+            if error_type == "anti_bot":
+                print("  1. ヘッダー戦略を即座変更")
+                print("  2. ユーザーエージェントをローテーション")
+                print("  3. 一時停止してメンテナンスを検討")
+            elif error_type == "ip_blocked":
+                print("  1. IPアドレスの変更")
+                print("  2. VPN/プロキシの利用を検討")
+                print("  3. 24時間以上の休止を検討")
+            elif error_type == "account_restricted":
+                print("  1. アカウント状態の手動確認")
+                print("  2. 代替アカウントの準備")
+                print("  3. 数日間の操作停止")
+        
+        print(f"\n次回警告まで: {self.early_warning_system['warning_cooldown']//60}分間")
+        print("========================\n")
 
     def get_cache_stats(self) -> Dict[str, Any]:
         """キャッシュの統計情報を取得"""
