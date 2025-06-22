@@ -1234,10 +1234,13 @@ class TwitterAPI:
                 self._403_error_stats["classified_errors"][error_type] = 0
             self._403_error_stats["classified_errors"][error_type] += 1
             
-            # 403エラー専用処理：Cookie強制更新（全サービス超積極的）
+            # 403エラー専用処理：Cookie強制更新（無限ループ防止）
             if self.cookie_manager.force_refresh_on_error_threshold(
-                self._403_error_stats["total_403_errors"], threshold=1):
+                self._403_error_stats["total_403_errors"], threshold=5):
                 print(f"🔄 403エラー蓄積による強制リトライ対象: {action_name}")
+                # Cookie更新後の待機時間を追加（無限ループ防止）
+                import time
+                time.sleep(2)
                 # Note: リトライは呼び出し元で実装
             
             # HTTPエラー分析システムへの記録
@@ -1480,12 +1483,25 @@ class TwitterAPI:
             raise
 
     def _reset_error_counters_on_success(self):
-        """成功時にエラーカウンターをリセット"""
-        if self._consecutive_errors > 0 or self._error_count_in_window > 0:
-            if self.debug_mode:
-                print(f"📉 エラーカウンターリセット (連続: {self._consecutive_errors}, 窓内: {self._error_count_in_window})")
-        self._consecutive_errors = 0
-        # 監視窓は継続（時間ベースのため）
+        """成功時にエラーカウンターをリセット（403エラー統計含む）"""
+        reset_messages = []
+        
+        if self._consecutive_errors > 0:
+            reset_messages.append(f"連続: {self._consecutive_errors}")
+            self._consecutive_errors = 0
+        
+        if self._error_count_in_window > 0:
+            reset_messages.append(f"窓内: {self._error_count_in_window}")
+            # 監視窓は継続（時間ベースのため）
+        
+        # 403エラー統計のリセット（重要: 無限ループ防止）
+        if self._403_error_stats["total_403_errors"] > 0:
+            reset_messages.append(f"403エラー: {self._403_error_stats['total_403_errors']}")
+            self._403_error_stats["total_403_errors"] = 0
+            self._403_error_stats["classified_errors"] = {}
+        
+        if reset_messages and self.debug_mode:
+            print(f"📉 エラーカウンターリセット ({', '.join(reset_messages)})")
 
 
     def _get_login_user_id(self) -> str:
