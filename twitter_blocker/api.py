@@ -14,6 +14,7 @@ import requests
 
 from .config import CookieManager
 from .retry import RetryManager
+from .error_analytics import HTTPErrorAnalytics
 
 
 class HeaderEnhancer:
@@ -219,6 +220,9 @@ class TwitterAPI:
         self.debug_mode = debug_mode
         self.enable_header_enhancement = enable_header_enhancement
         
+        # セッション開始時刻の記録（長期稼働パターン検出用）
+        self._session_start_time = time.time()
+        
         # ヘッダー拡張機能の初期化
         if enable_header_enhancement:
             self.header_enhancer = HeaderEnhancer(enable_forwarded_for=enable_forwarded_for)
@@ -269,6 +273,9 @@ class TwitterAPI:
             "last_warning_time": 0,
             "warning_cooldown": 600  # 10分間のクールダウン
         }
+        
+        # HTTPエラー分析システムの初期化（後で設定）
+        self.error_analytics = None
 
 
     def get_user_info(self, screen_name: str) -> Optional[Dict[str, Any]]:
@@ -1227,6 +1234,30 @@ class TwitterAPI:
                 self._403_error_stats["classified_errors"][error_type] = 0
             self._403_error_stats["classified_errors"][error_type] += 1
             
+            # HTTPエラー分析システムへの記録
+            if self.error_analytics:
+                runtime_hours = (time.time() - self._session_start_time) / 3600
+                self.error_analytics.record_error_with_context({
+                    'timestamp': time.time(),
+                    'error_type': error_type,
+                    'status_code': status_code,
+                    'response_text': response_text[:1000],  # 最初の1000文字のみ
+                    'headers': dict(headers),
+                    'runtime_hours': runtime_hours,
+                    'retry_count': 0,  # 初回エラー
+                    'success_rate_before': 1.0,  # TODO: 実際の成功率計算
+                    'header_enhancement_active': self.enable_header_enhancement,
+                    'user_context': f"Priority: {priority}, Description: {description}",
+                    'container_name': 'unknown'  # TODO: コンテナ名の取得
+                })
+                
+                # 時間帯別統計の更新
+                self.error_analytics.update_hourly_stats(
+                    runtime_hours=runtime_hours,
+                    error_occurred=True,
+                    error_type=error_type
+                )
+            
             # 早期警告システムのチェック
             self._check_early_warning_conditions(error_type)
             
@@ -1558,6 +1589,52 @@ class TwitterAPI:
         
         return combined_data
     
+    def _check_long_term_403_patterns(self) -> List[str]:
+        """長期稼働時の403エラーパターンを早期検出"""
+        warnings = []
+        current_time = time.time()
+        
+        # セッション開始時刻の推定（初回リクエスト時刻）
+        if hasattr(self, '_session_start_time'):
+            runtime_hours = (current_time - self._session_start_time) / 3600
+        else:
+            # 初回実行時はセッション開始時刻を設定
+            self._session_start_time = current_time
+            runtime_hours = 0
+        
+        # 2-3時間の重要遷移期間での警告
+        if 2.0 <= runtime_hours <= 3.5:
+            total_403s = self._403_error_stats["total_403_errors"]
+            recent_auth_errors = self._403_error_stats["classified_errors"].get("auth_required", 0)
+            recent_anti_bot = self._403_error_stats["classified_errors"].get("anti_bot", 0)
+            
+            if recent_auth_errors > 5:
+                warnings.append(f"🚨 認証劣化検出 (2-3時間遷移期): 認証エラー{recent_auth_errors}回 - Cookie予防的再読み込み推奨")
+            
+            if recent_anti_bot > 3:
+                warnings.append(f"🤖 アンチボット強化検出 (2-3時間遷移期): anti_botエラー{recent_anti_bot}回 - ヘッダー戦略変更必要")
+            
+            if total_403s > 20:
+                warnings.append(f"⚠️ 403エラー集中発生 (2-3時間遷移期): 総数{total_403s}回 - システム劣化進行中")
+        
+        # 3時間以上の長期稼働での劣化パターン
+        elif runtime_hours > 3.0:
+            # IP評価低下の検出
+            ip_blocked = self._403_error_stats["classified_errors"].get("ip_blocked", 0)
+            account_restricted = self._403_error_stats["classified_errors"].get("account_restricted", 0)
+            
+            if ip_blocked > 0:
+                warnings.append(f"🚨 IP制限検出 (長期稼働{runtime_hours:.1f}h): IP制限{ip_blocked}回 - 最重要レベル対応必要")
+            
+            if account_restricted > 2:
+                warnings.append(f"🔒 アカウント制限増加 (長期稼働{runtime_hours:.1f}h): 制限{account_restricted}回 - アカウント健全性低下")
+            
+            # 長期稼働成功の場合のポジティブメッセージ
+            if self._403_error_stats["total_403_errors"] < 10:
+                warnings.append(f"✅ 長期稼働安定継続 ({runtime_hours:.1f}h): 403エラー{self._403_error_stats['total_403_errors']}回のみ - 優秀な安定性")
+        
+        return warnings
+    
     def get_403_error_report(self) -> Dict[str, Any]:
         """詳細な403エラー統計レポートを取得"""
         retry_stats = self.retry_manager.get_error_statistics()
@@ -1579,8 +1656,15 @@ class TwitterAPI:
         # ヘッダー効果統計
         header_report = self.header_enhancer.get_effectiveness_report() if self.header_enhancer else {}
         
+        # 長期稼働時の早期警告チェック
+        long_term_warnings = self._check_long_term_403_patterns()
+        
         # 推奨事項の生成
         recommendations = []
+        
+        # 長期稼働警告の追加
+        if long_term_warnings:
+            recommendations.extend(long_term_warnings)
         
         if error_403_report["total_403_errors"] > 50:
             dominant_error = max(error_403_report["classified_errors"].items(), key=lambda x: x[1])
@@ -1595,15 +1679,28 @@ class TwitterAPI:
         if retry_stats.get("success_rate", 1.0) < 0.5:
             recommendations.append("リトライ成功率が低いため、バックオフ戦略の調整が必要")
         
+        # HTTPエラー分析システムからの追加データ
+        error_analytics_data = {}
+        if self.error_analytics:
+            try:
+                error_analytics_data = {
+                    "real_time_status": self.error_analytics.get_real_time_status(),
+                    "error_progression": self.error_analytics.analyze_error_progression_patterns()
+                }
+            except Exception as e:
+                error_analytics_data = {"error": f"分析データ取得エラー: {e}"}
+        
         return {
             "summary": {
                 "total_403_errors": error_403_report["total_403_errors"],
                 "header_quality_score": header_report.get("quality_score", 0),
                 "retry_success_rate": retry_stats.get("success_rate", 0),
-                "analysis_timestamp": datetime.now().isoformat()
+                "analysis_timestamp": datetime.now().isoformat(),
+                "runtime_hours": (time.time() - self._session_start_time) / 3600
             },
             "detailed_403_analysis": error_403_report,
             "header_effectiveness": header_report,
+            "error_analytics": error_analytics_data,
             "recommendations": recommendations,
             "urgent_actions_needed": len([r for r in recommendations if "特別対応" in r or "緊急" in r]) > 0
         }
