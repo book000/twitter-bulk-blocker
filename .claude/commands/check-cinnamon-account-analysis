@@ -1,0 +1,329 @@
+#!/bin/bash
+
+# check-cinnamon-account-analysis - アカウント別詳細分析・最適化提案モジュール
+
+set -e
+
+BRIEF=false
+RECOMMENDATIONS=true
+
+# オプション解析
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --brief|-b)
+            BRIEF=true
+            shift
+            ;;
+        --no-recommendations)
+            RECOMMENDATIONS=false
+            shift
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
+if [ "$BRIEF" = false ]; then
+    echo "👥 ACCOUNT-SPECIFIC ANALYSIS & OPTIMIZATION"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+fi
+
+# アカウント分析データ収集
+analyze_account() {
+    local account="$1"
+    local container="bulk-block-users-${account}-1"
+    
+    # 過去24時間のログ分析
+    local processed_24h=$(ssh Cinnamon "docker logs $container --since='24h' 2>&1 | grep -E '(blocked|success|completed)' | wc -l" 2>/dev/null || echo "0")
+    local errors_24h=$(ssh Cinnamon "docker logs $container --since='24h' 2>&1 | grep -E '(403|error|failed)' | wc -l" 2>/dev/null || echo "0")
+    local rate_limit_errors=$(ssh Cinnamon "docker logs $container --since='24h' 2>&1 | grep -i 'rate.limit' | wc -l" 2>/dev/null || echo "0")
+    local auth_errors=$(ssh Cinnamon "docker logs $container --since='24h' 2>&1 | grep -E '(unauthorized|authentication|cookie)' | wc -l" 2>/dev/null || echo "0")
+    local network_errors=$(ssh Cinnamon "docker logs $container --since='24h' 2>&1 | grep -E '(timeout|connection|network)' | wc -l" 2>/dev/null || echo "0")
+    
+    # 過去1時間のエラー頻度（直近の状態）
+    local recent_errors=$(ssh Cinnamon "docker logs $container --since='1h' 2>&1 | grep -E '(403|error|failed)' | wc -l" 2>/dev/null || echo "0")
+    
+    # 成功率計算
+    local success_rate=0
+    if [ "$processed_24h" -gt 0 ]; then
+        success_rate=$(( (processed_24h - errors_24h) * 100 / processed_24h ))
+    fi
+    
+    # リスクレベル判定
+    local risk_level="LOW"
+    local risk_score=0
+    
+    # リスクスコア計算
+    if [ "$errors_24h" -gt 100 ]; then
+        risk_score=$((risk_score + 3))
+    elif [ "$errors_24h" -gt 50 ]; then
+        risk_score=$((risk_score + 2))
+    elif [ "$errors_24h" -gt 20 ]; then
+        risk_score=$((risk_score + 1))
+    fi
+    
+    if [ "$success_rate" -lt 70 ]; then
+        risk_score=$((risk_score + 2))
+    elif [ "$success_rate" -lt 85 ]; then
+        risk_score=$((risk_score + 1))
+    fi
+    
+    if [ "$recent_errors" -gt 10 ]; then
+        risk_score=$((risk_score + 2))
+    elif [ "$recent_errors" -gt 5 ]; then
+        risk_score=$((risk_score + 1))
+    fi
+    
+    if [ "$risk_score" -ge 5 ]; then
+        risk_level="HIGH"
+    elif [ "$risk_score" -ge 3 ]; then
+        risk_level="MEDIUM"
+    fi
+    
+    # エラータイプ分析
+    local primary_issue="NONE"
+    if [ "$auth_errors" -gt "$rate_limit_errors" ] && [ "$auth_errors" -gt "$network_errors" ]; then
+        primary_issue="AUTH"
+    elif [ "$rate_limit_errors" -gt "$auth_errors" ] && [ "$rate_limit_errors" -gt "$network_errors" ]; then
+        primary_issue="RATE_LIMIT"
+    elif [ "$network_errors" -gt 0 ]; then
+        primary_issue="NETWORK"
+    elif [ "$errors_24h" -gt 0 ]; then
+        primary_issue="GENERAL"
+    fi
+    
+    # 結果をJSONフォーマットで出力
+    cat <<EOF
+{
+  "account": "$account",
+  "container": "$container",
+  "metrics": {
+    "processed_24h": $processed_24h,
+    "errors_24h": $errors_24h,
+    "success_rate": $success_rate,
+    "recent_errors_1h": $recent_errors
+  },
+  "error_breakdown": {
+    "rate_limit": $rate_limit_errors,
+    "auth": $auth_errors,
+    "network": $network_errors,
+    "primary_issue": "$primary_issue"
+  },
+  "risk_assessment": {
+    "level": "$risk_level",
+    "score": $risk_score
+  }
+}
+EOF
+}
+
+# 最適化提案生成
+generate_recommendations() {
+    local account_data="$1"
+    local account=$(echo "$account_data" | jq -r '.account')
+    local risk_level=$(echo "$account_data" | jq -r '.risk_assessment.level')
+    local primary_issue=$(echo "$account_data" | jq -r '.error_breakdown.primary_issue')
+    local success_rate=$(echo "$account_data" | jq -r '.metrics.success_rate')
+    local errors_24h=$(echo "$account_data" | jq -r '.metrics.errors_24h')
+    local recent_errors=$(echo "$account_data" | jq -r '.metrics.recent_errors_1h')
+    
+    local recommendations=()
+    
+    # リスクレベル別の基本推奨事項
+    case "$risk_level" in
+        "HIGH")
+            recommendations+=("🚨 緊急対応が必要：コンテナ再起動を検討")
+            if [ "$primary_issue" = "AUTH" ]; then
+                recommendations+=("🔑 認証エラー：Cookie更新を実行")
+                recommendations+=("📝 認証状態の詳細確認：ログイン情報の検証")
+            elif [ "$primary_issue" = "RATE_LIMIT" ]; then
+                recommendations+=("⏱️ レート制限：処理間隔の調整（遅延増加）")
+                recommendations+=("📊 API使用量の監視強化")
+            elif [ "$primary_issue" = "NETWORK" ]; then
+                recommendations+=("🌐 ネットワーク問題：接続設定の確認")
+                recommendations+=("🔄 リトライ戦略の見直し")
+            fi
+            ;;
+        "MEDIUM")
+            recommendations+=("⚠️ 監視強化：定期的な状態確認")
+            if [ "$success_rate" -lt 80 ]; then
+                recommendations+=("📈 成功率改善：エラーパターンの詳細分析")
+            fi
+            if [ "$recent_errors" -gt 5 ]; then
+                recommendations+=("🔍 直近エラー増加：ログの詳細確認")
+            fi
+            ;;
+        "LOW")
+            recommendations+=("✅ 良好な状態：現在の設定を維持")
+            if [ "$success_rate" -gt 95 ]; then
+                recommendations+=("🎯 優秀なパフォーマンス：他アカウントの参考に")
+            fi
+            ;;
+    esac
+    
+    # 具体的な実行コマンド提案
+    if [ "$risk_level" = "HIGH" ]; then
+        case "$primary_issue" in
+            "AUTH")
+                recommendations+=("📋 実行コマンド：ssh Cinnamon 'docker restart bulk-block-users-${account}-1'")
+                ;;
+            "RATE_LIMIT")
+                recommendations+=("📋 設定調整：処理間隔の見直しが必要")
+                ;;
+            "NETWORK")
+                recommendations+=("📋 実行コマンド：docker logs bulk-block-users-${account}-1 --tail 100")
+                ;;
+        esac
+    fi
+    
+    # アカウント固有の最適化提案
+    case "$account" in
+        "book000")
+            if [ "$errors_24h" -gt 20 ]; then
+                recommendations+=("👤 book000固有：メインアカウントのため慎重な対応")
+            fi
+            ;;
+        "tomarabbit")
+            if [ "$success_rate" -lt 90 ]; then
+                recommendations+=("🐰 tomarabbit固有：処理パターンの調整検討")
+            fi
+            ;;
+        "authorizedkey")
+            if [ "$recent_errors" -gt 3 ]; then
+                recommendations+=("🔐 authorizedkey固有：認証トークンの確認")
+            fi
+            ;;
+    esac
+    
+    # 推奨事項をJSON配列として出力
+    local rec_json="["
+    local first=true
+    for rec in "${recommendations[@]}"; do
+        if [ "$first" = true ]; then
+            first=false
+        else
+            rec_json+=","
+        fi
+        rec_json+="\"$rec\""
+    done
+    rec_json+="]"
+    
+    echo "$rec_json"
+}
+
+# アカウントリスト
+accounts=("book000" "ihc_amot" "book000_vrc" "authorizedkey" "tomachi_priv" "tomarabbit")
+
+# 全アカウント分析
+for account in "${accounts[@]}"; do
+    echo ""
+    if [ "$BRIEF" = true ]; then
+        echo "👤 $account:"
+    else
+        echo "👤 アカウント: $account"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    fi
+    
+    account_data=$(analyze_account "$account")
+    
+    # 基本メトリクス表示
+    processed=$(echo "$account_data" | jq -r '.metrics.processed_24h')
+    errors=$(echo "$account_data" | jq -r '.metrics.errors_24h')
+    success_rate=$(echo "$account_data" | jq -r '.metrics.success_rate')
+    recent_errors=$(echo "$account_data" | jq -r '.metrics.recent_errors_1h')
+    risk_level=$(echo "$account_data" | jq -r '.risk_assessment.level')
+    primary_issue=$(echo "$account_data" | jq -r '.error_breakdown.primary_issue')
+    
+    # リスクレベル表示用アイコン
+    case "$risk_level" in
+        "HIGH") risk_icon="🚨" ;;
+        "MEDIUM") risk_icon="⚠️" ;;
+        "LOW") risk_icon="✅" ;;
+    esac
+    
+    if [ "$BRIEF" = true ]; then
+        printf "  処理: %d件/24h, エラー: %d件, 成功率: %d%%, リスク: %s %s\n" \
+               "$processed" "$errors" "$success_rate" "$risk_icon" "$risk_level"
+        if [ "$recent_errors" -gt 0 ]; then
+            printf "  直近1h: %d件エラー\n" "$recent_errors"
+        fi
+    else
+        echo "📊 パフォーマンス指標 (24時間):"
+        echo "  処理数: ${processed}件"
+        echo "  エラー数: ${errors}件"
+        echo "  成功率: ${success_rate}%"
+        echo "  直近エラー(1h): ${recent_errors}件"
+        echo ""
+        echo "🎯 リスク評価: ${risk_icon} ${risk_level}"
+        if [ "$primary_issue" != "NONE" ]; then
+            echo "🔍 主要課題: $primary_issue"
+        fi
+    fi
+    
+    # 最適化提案表示
+    if [ "$RECOMMENDATIONS" = true ]; then
+        recommendations=$(generate_recommendations "$account_data")
+        rec_count=$(echo "$recommendations" | jq length)
+        
+        if [ "$rec_count" -gt 0 ]; then
+            echo ""
+            if [ "$BRIEF" = true ]; then
+                echo "  💡 推奨事項:"
+            else
+                echo "💡 最適化提案:"
+            fi
+            
+            for ((i=0; i<rec_count; i++)); do
+                rec=$(echo "$recommendations" | jq -r ".[$i]")
+                if [ "$BRIEF" = true ]; then
+                    echo "    • $rec"
+                else
+                    echo "  • $rec"
+                fi
+            done
+        fi
+    fi
+done
+
+# 全体サマリー
+echo ""
+if [ "$BRIEF" = false ]; then
+    echo "📋 OVERALL SUMMARY"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+fi
+
+# 高リスクアカウント数を集計
+high_risk_count=0
+medium_risk_count=0
+low_risk_count=0
+
+for account in "${accounts[@]}"; do
+    account_data=$(analyze_account "$account")
+    risk_level=$(echo "$account_data" | jq -r '.risk_assessment.level')
+    
+    case "$risk_level" in
+        "HIGH") high_risk_count=$((high_risk_count + 1)) ;;
+        "MEDIUM") medium_risk_count=$((medium_risk_count + 1)) ;;
+        "LOW") low_risk_count=$((low_risk_count + 1)) ;;
+    esac
+done
+
+if [ "$BRIEF" = true ]; then
+    echo "📊 リスク分布: HIGH($high_risk_count) MEDIUM($medium_risk_count) LOW($low_risk_count)"
+else
+    echo "📊 アカウントリスク分布:"
+    echo "  🚨 HIGH リスク: ${high_risk_count}アカウント"
+    echo "  ⚠️ MEDIUM リスク: ${medium_risk_count}アカウント"
+    echo "  ✅ LOW リスク: ${low_risk_count}アカウント"
+fi
+
+# 緊急対応が必要な場合の警告
+if [ "$high_risk_count" -gt 0 ]; then
+    echo ""
+    echo "🚨 緊急対応推奨: ${high_risk_count}アカウントで高リスクを検出"
+    if [ "$BRIEF" = false ]; then
+        echo "  詳細確認: check-cinnamon-account-analysis"
+        echo "  エラー分析: check-cinnamon --errors-only"
+    fi
+fi
