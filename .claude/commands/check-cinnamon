@@ -313,8 +313,11 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 # 前回実行の履歴ファイルを確認
 HISTORY_FILE="/tmp/cinnamon-history-trend.json"
 if [ -f "$HISTORY_FILE" ]; then
-    PREV_RUNNING=$(jq -r '.containers.running // 0' "$HISTORY_FILE" 2>/dev/null || echo "0")
-    PREV_STOPPED=$(jq -r '.containers.stopped // 0' "$HISTORY_FILE" 2>/dev/null || echo "0")
+    PREV_RUNNING=$(jq -r '.containers.running // 0' "$HISTORY_FILE" 2>/dev/null)
+    PREV_STOPPED=$(jq -r '.containers.stopped // 0' "$HISTORY_FILE" 2>/dev/null)
+    # 空文字列の場合は0に設定
+    PREV_RUNNING=${PREV_RUNNING:-0}
+    PREV_STOPPED=${PREV_STOPPED:-0}
     PREV_TIMESTAMP=$(jq -r '.timestamp // "unknown"' "$HISTORY_FILE" 2>/dev/null || echo "unknown")
     
     echo "📊 前回チェックとの比較（$PREV_TIMESTAMP）:"

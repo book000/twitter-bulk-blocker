@@ -30,6 +30,9 @@ twitter_blocker/
 - **永続的失敗の事前チェック**: suspended/not_found/deactivatedでAPI呼び出し回避
 - **バッチ処理必須**: N+1問題の徹底回避
 - **リソース管理**: SQLite接続はcontext manager必須使用
+- **スクリプト開発方針**: check-cinnamonなどの監視スクリプトは実行時間より機能性・正確性を優先
+  - 高速版・最適化版などのバリエーションは作成しない（単一バージョンを維持）
+  - 機能の切り替えが必要な場合はコマンドラインオプションで対応
 
 ### 実装パターン
 ```python
@@ -152,34 +155,28 @@ python3 -m twitter_blocker --all --disable-header-enhancement  # 緊急時無効
 # 例: .claude/cinnamon-monitor-suite.sh ai
 ```
 
-### 監視ツール使い分けガイド (v2.2対応 - 高速化版追加)
-| 状況 | 推奨ツール | 実行方法 | 実行時間 |
-|------|------------|----------|----------|
-| **🚀 超高速チェック** | 最小版 | `.claude/commands/check-cinnamon-minimal` | 3-5秒 |
-| **⚡ 高速監視** | 高速版 | `.claude/commands/check-cinnamon-fast` | 10-15秒 |
-| **⚡ 高速監視（推奨）** | 最適化版 | `.claude/commands/check-cinnamon` | **3秒** |
-| **🔍 詳細分析** | 包括的分析（旧版） | `.claude/commands/check-cinnamon-original-backup` | 60秒+ |
-| **🆕 長期履歴分析** | 高速化版で対応 | `.claude/commands/check-cinnamon` | **3秒** |
-| **🔄 自己改善・最適化** | 高速化版で対応 | `.claude/commands/check-cinnamon` | **3秒** |
-| **Claude Code標準** | AI最適化版 | `cinnamon-logs-ai-optimized.sh` | 30秒 |
-| **問題詳細調査** | AI最適化版 | `cinnamon-logs-ai-optimized.sh` | 30秒 |
-| **基本チェック** | 統合インターフェース | `cinnamon-monitor-suite.sh basic` | 20秒 |
-| **緊急対応** | 統合インターフェース | `cinnamon-monitor-suite.sh emergency` | 20秒 |
+### 監視ツール使い分けガイド
+| 状況 | 推奨ツール | 実行方法 | 備考 |
+|------|------------|----------|------|
+| **📊 包括的分析（推奨）** | メイン版 | `.claude/commands/check-cinnamon` | 全機能搭載、詳細分析 |
+| **🔍 詳細分析** | 包括的分析（旧版） | `.claude/commands/check-cinnamon-original-backup` | 比較・参照用 |
+| **🆕 長期履歴分析** | メイン版で対応 | `.claude/commands/check-cinnamon` | 24時間エラー履歴対応 |
+| **🔄 自己改善・最適化** | メイン版で対応 | `.claude/commands/check-cinnamon` | 実行メタデータ収集 |
+| **Claude Code標準** | AI最適化版 | `cinnamon-logs-ai-optimized.sh` | 構造化出力 |
+| **問題詳細調査** | AI最適化版 | `cinnamon-logs-ai-optimized.sh` | 根本原因分析 |
+| **基本チェック** | 統合インターフェース | `cinnamon-monitor-suite.sh basic` | 基本監視 |
+| **緊急対応** | 統合インターフェース | `cinnamon-monitor-suite.sh emergency` | 即時対応 |
 
 ### Claude Code分析システム
 ```bash
-# 🚀 高速監視コマンド（新規追加）
-.claude/commands/check-cinnamon-minimal    # 3-5秒: ヘルスチェック専用
-.claude/commands/check-cinnamon-fast       # 10-15秒: 頻繁な監視用
-.claude/commands/check-cinnamon-optimized  # 15-20秒: 通常監視（推奨）
-
-# ⚡ 高速化包括分析（メイン・推奨）
+# 📊 包括分析コマンド（推奨）
 .claude/commands/check-cinnamon
-# 特徴: 74秒→3秒（23.9倍高速化）、SSH接続1回化、全機能維持
+# 特徴: 詳細な分析機能、24時間エラー履歴、実行メタデータ収集
+# 注: 実行時間の高速化は優先事項ではありません。機能性と正確性を重視
 
 # 🔄 従来版包括分析（詳細調査・比較用）
 .claude/commands/check-cinnamon-original-backup
-# 特徴: 24時間エラー履歴、実行メタデータ収集、自動改善提案（74秒）
+# 特徴: 24時間エラー履歴、実行メタデータ収集、自動改善提案
 
 # AI最適化版での問題特定・修正提案
 .claude/cinnamon-logs-ai-optimized.sh
