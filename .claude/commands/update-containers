@@ -147,7 +147,7 @@ echo "🔄 docker compose down を実行中..."
 UPDATE_START_TIME=$(date +%s)
 
 # docker compose downを実行
-ssh Cinnamon "cd /opt/docker && docker compose down" || {
+ssh Cinnamon "cd /mnt/hdd/cinnamon/twitter-auto-blocking/bulk-block-users && docker compose down" || {
     echo "❌ docker compose down が失敗しました"
     exit 1
 }
