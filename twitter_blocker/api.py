@@ -888,6 +888,16 @@ class TwitterAPI:
             # その他のエラー
             error_msg, error_classification = self._get_detailed_error_message(response, f"block {screen_name}")
             
+            # 403エラー専用処理：Cookie強制更新
+            if response.status_code == 403:
+                self._403_error_stats["total_403_errors"] += 1
+                # 403エラー閾値による強制Cookie更新（より積極的）
+                if self.cookie_manager.force_refresh_on_error_threshold(
+                    self._403_error_stats["total_403_errors"], threshold=2):
+                    print(f"🔄 403エラー蓄積による強制リトライ: {screen_name}")
+                    # Cookie更新後に1回だけリトライ
+                    return self.block_user(user_id, screen_name)
+            
             # 拡張ヘッダーの効果測定
             if self.header_enhancer:
                 self.header_enhancer.record_request_result(
