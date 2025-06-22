@@ -44,9 +44,9 @@ total_403s=0
 
 for account in "${accounts[@]}"; do
     container="bulk-block-users-${account}-1"
-    attempts=$(ssh Cinnamon "docker logs $container --since='1h' 2>&1 | grep -c 'Processing'" || echo "0")
-    successes=$(ssh Cinnamon "docker logs $container --since='1h' 2>&1 | grep -c 'success'" || echo "0")
-    errors_403=$(ssh Cinnamon "docker logs $container --since='1h' 2>&1 | grep -c '403'" || echo "0")
+    attempts=$(ssh Cinnamon "docker logs $container --since='1h' 2>&1 | grep -c 'Processing' || echo 0")
+    successes=$(ssh Cinnamon "docker logs $container --since='1h' 2>&1 | grep -c 'success' || echo 0")
+    errors_403=$(ssh Cinnamon "docker logs $container --since='1h' 2>&1 | grep -c '403' || echo 0")
     
     printf "%-15s: 試行%3d件, 成功%3d件, 403エラー%3d件\n" "$account" "$attempts" "$successes" "$errors_403"
     
