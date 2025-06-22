@@ -69,7 +69,11 @@ def get_git_version():
 
 
 def get_app_version_file():
-    """CI/CDで生成される.app-versionファイルからバージョンを取得"""
+    """CI/CDで生成される.app-versionファイルからバージョンを取得
+    
+    注: reusable workflow修正により、build-argsでAPPLICATION_VERSIONが
+    正しく渡されることで、このファイルが適切に生成されるようになりました。
+    """
     try:
         # パッケージのルートディレクトリを特定
         package_dir = Path(__file__).parent.parent
