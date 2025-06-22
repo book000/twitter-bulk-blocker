@@ -373,7 +373,7 @@ class PerformanceMonitor:
         rps = current_metrics.get('requests_per_second', 0)
         if rps < 0.1:  # 0.1rps未満
             alert = {
-                "type": "critical_speed_degradation",
+                "alert_type": "critical_speed_degradation",
                 "severity": "CRITICAL",
                 "title": "処理速度の重大な低下",
                 "description": f"リクエスト処理速度が{rps:.3f}rpsまで低下",
@@ -390,7 +390,7 @@ class PerformanceMonitor:
         success_rate = current_metrics.get('success_rate', 1.0)
         if success_rate < 0.5:  # 50%未満
             alert = {
-                "type": "critical_success_rate_drop",
+                "alert_type": "critical_success_rate_drop",
                 "severity": "HIGH",
                 "title": "成功率の重大な低下",
                 "description": f"処理成功率が{success_rate:.1%}まで低下",
@@ -407,7 +407,7 @@ class PerformanceMonitor:
         avg_time = current_metrics.get('avg_processing_time', 0)
         if avg_time > 10.0:  # 10秒以上
             alert = {
-                "type": "high_processing_time",
+                "alert_type": "high_processing_time",
                 "severity": "MEDIUM",
                 "title": "処理時間の異常増加",
                 "description": f"平均処理時間が{avg_time:.1f}秒まで増加",
