@@ -83,16 +83,16 @@ class CookieManager:
 
     TWITTER_DOMAINS = [".x.com", ".twitter.com", "x.com", "twitter.com"]
 
-    def __init__(self, cookies_file: str, cache_duration: int = 120):
+    def __init__(self, cookies_file: str, cache_duration: int = 90):
         self.cookies_file = cookies_file
         self._cookies_cache = None
         self._cache_timestamp = None
         self._file_mtime = None
-        self.cache_duration = cache_duration  # デフォルト2分（高頻度更新）
+        self.cache_duration = cache_duration  # デフォルト1.5分（高頻度更新）
         
         # サービス固有の積極的更新設定
-        self._aggressive_services = {"tomarabbit"}  # 問題頻発サービス
-        self._aggressive_duration = 60  # 1分間隔
+        self._aggressive_services = {"tomarabbit", "authorizedkey"}  # 問題頻発サービス
+        self._aggressive_duration = 30  # 30秒間隔（超積極的）
 
     def load_cookies(self) -> Dict[str, str]:
         """クッキーファイルを読み込み、動的更新対応のTwitterドメインクッキー抽出"""
@@ -157,8 +157,8 @@ class CookieManager:
         self._cache_timestamp = None
         self._file_mtime = None
     
-    def force_refresh_on_error_threshold(self, error_count: int, threshold: int = 2) -> bool:
-        """403エラーが閾値を超えた場合の強制Cookie更新（より積極的）"""
+    def force_refresh_on_error_threshold(self, error_count: int, threshold: int = 1) -> bool:
+        """403エラーが閾値を超えた場合の強制Cookie更新（超積極的）"""
         if error_count >= threshold:
             print(f"🚨 403エラー{error_count}回検出: Cookie強制更新実行（閾値: {threshold}）")
             self.clear_cache()

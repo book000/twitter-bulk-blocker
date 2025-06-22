@@ -891,9 +891,9 @@ class TwitterAPI:
             # 403エラー専用処理：Cookie強制更新
             if response.status_code == 403:
                 self._403_error_stats["total_403_errors"] += 1
-                # 403エラー閾値による強制Cookie更新（より積極的）
+                # 403エラー閾値による強制Cookie更新（超積極的）
                 if self.cookie_manager.force_refresh_on_error_threshold(
-                    self._403_error_stats["total_403_errors"], threshold=2):
+                    self._403_error_stats["total_403_errors"], threshold=1):
                     print(f"🔄 403エラー蓄積による強制リトライ: {screen_name}")
                     # Cookie更新後に1回だけリトライ
                     return self.block_user(user_id, screen_name)
