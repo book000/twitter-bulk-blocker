@@ -22,6 +22,8 @@ check-cinnamon --module <name>    # 特定モジュールのみ
 | `errors` | 403エラー分析 | `check-cinnamon-errors` |
 | `completion` | 完了率分析 | `check-cinnamon-completion` |
 | `health` | 長期ヘルス分析 | `check-cinnamon-health` |
+| `performance` | パフォーマンス指標・履歴比較 | `check-cinnamon-performance` |
+| `accounts` | アカウント別詳細分析・最適化提案 | `check-cinnamon-account-analysis` |
 
 ## 📊 基本使用方法
 
@@ -46,6 +48,8 @@ check-cinnamon --errors-only
 # 特定モジュールでの深掘り
 check-cinnamon --module errors
 check-cinnamon --module health
+check-cinnamon --module performance
+check-cinnamon --module accounts
 
 # 完全な詳細分析
 check-cinnamon --detailed
@@ -66,7 +70,7 @@ check-cinnamon --module container
 **バージョン情報の分析**
 - 稼働中コンテナのバージョン取得
 - GitHub最新リリースとの比較
-- イメージ整合性チェック
+- イメージ整合性チェック（プレフィックス正規化対応）
 - 更新推奨判定
 
 ```bash
@@ -112,6 +116,33 @@ check-cinnamon-errors           # 詳細版
 - Cookie更新システムの健全性
 - ヘルススコアの算出
 
+### check-cinnamon-performance
+**パフォーマンス指標・履歴比較**
+- 24時間のパフォーマンス指標収集（処理数、エラー数、成功率）
+- アカウント別詳細メトリクス
+- 履歴データとの比較分析（最大100件保持）
+- トレンド判定機能（改善/悪化の自動検出）
+- 処理速度の推定（件/時）
+
+```bash
+check-cinnamon-performance        # 現在の指標表示
+check-cinnamon-performance --compare  # 履歴比較分析
+```
+
+### check-cinnamon-account-analysis
+**アカウント別詳細分析・最適化提案**
+- アカウント別リスク評価（HIGH/MEDIUM/LOW）
+- エラータイプ分析（AUTH/RATE_LIMIT/NETWORK/GENERAL）
+- 個別最適化提案の自動生成
+- 具体的な実行コマンド提示
+- アカウント固有の推奨事項
+- 全体リスク分布サマリー
+
+```bash
+check-cinnamon-account-analysis        # 全アカウント分析
+check-cinnamon-account-analysis --brief  # 簡潔版
+```
+
 ## ⚡ パフォーマンス改善
 
 ### 従来の問題
@@ -134,6 +165,9 @@ check-cinnamon --module errors --module health
 
 # バージョンとコンテナ状態のみ
 check-cinnamon --module version --module container
+
+# パフォーマンスとアカウント分析
+check-cinnamon --module performance --module accounts
 ```
 
 ### 自動化での活用
@@ -199,9 +233,25 @@ check-cinnamon --detailed
 - **モジュール活用**: 問題の種類に応じて適切なモジュールを選択
 - **出力制限回避**: 大量の情報が必要な場合は複数回に分けて実行
 
+## 📈 最新機能追加（v0.34.2）
+
+### 🆕 バージョン表示の改善
+- プレフィックス（v）の正規化により、バージョン比較の精度向上
+- 「0.34.2」と「v0.34.2」を同一視して正しく判定
+
+### 🆕 パフォーマンス分析機能
+- 処理速度、成功率の履歴保存と比較
+- トレンド分析による改善/悪化の自動判定
+- アカウント別の詳細メトリクス
+
+### 🆕 アカウント別最適化提案
+- リスクレベルの自動評価（HIGH/MEDIUM/LOW）
+- エラータイプ別の具体的な対処法
+- アカウント固有の最適化アドバイス
+
 ## 📈 今後の拡張予定
 
-- **新モジュール**: パフォーマンス分析、ネットワーク品質等
 - **カスタムプロファイル**: 用途別のモジュール組み合わせ
 - **レポート機能**: 分析結果の構造化出力
 - **アラート機能**: 閾値ベースの自動通知
+- **予測分析**: 将来のパフォーマンス予測
