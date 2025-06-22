@@ -3,6 +3,7 @@
 """
 
 import json
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -78,19 +79,56 @@ class ConfigManager:
 
 
 class CookieManager:
-    """クッキー管理クラス"""
+    """クッキー管理クラス - 全サービス対応動的更新システム"""
 
     TWITTER_DOMAINS = [".x.com", ".twitter.com", "x.com", "twitter.com"]
 
-    def __init__(self, cookies_file: str):
+    def __init__(self, cookies_file: str, cache_duration: int = 60):
         self.cookies_file = cookies_file
         self._cookies_cache = None
+        self._cache_timestamp = None
+        self._file_mtime = None
+        self.cache_duration = cache_duration  # デフォルト60秒（全サービス高頻度更新）
+        
+        # 全サービス対応の統一設定
+        self._global_optimization = True  # 全サービス最適化モード
+        self._min_cache_duration = 30     # 最小キャッシュ期間（30秒）
 
     def load_cookies(self) -> Dict[str, str]:
-        """クッキーファイルを読み込み、Twitterドメインのクッキーのみ抽出"""
-        # キャッシュがあればそれを返す
-        if self._cookies_cache is not None:
+        """クッキーファイルを読み込み、動的更新対応のTwitterドメインクッキー抽出"""
+        current_time = time.time()
+        cookie_path = Path(self.cookies_file)
+        
+        # ファイル存在チェック
+        if not cookie_path.exists():
+            raise FileNotFoundError(f"Cookieファイルが見つかりません: {self.cookies_file}")
+        
+        current_mtime = cookie_path.stat().st_mtime
+        
+        # 全サービス統一の高頻度更新判定
+        effective_duration = min(self.cache_duration, self._min_cache_duration)
+        
+        # キャッシュ有効性チェック（全サービス統一設定）
+        cache_valid = (
+            self._cookies_cache is not None and
+            self._cache_timestamp is not None and
+            self._file_mtime is not None and
+            # 1. 統一時間ベース有効期限チェック
+            (current_time - self._cache_timestamp < effective_duration) and
+            # 2. ファイル更新チェック  
+            (current_mtime == self._file_mtime)
+        )
+        
+        if cache_valid:
             return self._cookies_cache
+        
+        # キャッシュ無効時：ファイルから再読み込み
+        service_name = self._detect_service_from_path()
+        print(f"🔄 Cookie再読み込み [全サービス最適化]: {self.cookies_file}")
+        if self._cookies_cache is not None:
+            print(f"   サービス: {service_name}, 時間経過={current_time - (self._cache_timestamp or 0):.1f}秒 "
+                  f"(設定: {effective_duration}秒), "
+                  f"ファイル更新={'Yes' if current_mtime != (self._file_mtime or 0) else 'No'}")
         
         with open(self.cookies_file, "r", encoding="utf-8") as f:
             cookies_list = json.load(f)
@@ -101,9 +139,71 @@ class CookieManager:
             if domain in self.TWITTER_DOMAINS:
                 cookies_dict[cookie["name"]] = cookie["value"]
 
+        # キャッシュ更新
         self._cookies_cache = cookies_dict
+        self._cache_timestamp = current_time
+        self._file_mtime = current_mtime
+        
+        print(f"✅ Cookie更新完了 [{service_name}]: {len(cookies_dict)}個のTwitter関連Cookie取得")
         return cookies_dict
     
     def clear_cache(self):
         """クッキーキャッシュをクリアして次回読み込み時にファイルから再読み込みさせる"""
+        service_name = self._detect_service_from_path()
+        print(f"🧹 Cookieキャッシュクリア実行 [{service_name}]")
         self._cookies_cache = None
+        self._cache_timestamp = None
+        self._file_mtime = None
+    
+    def force_refresh_on_error_threshold(self, error_count: int, threshold: int = 1) -> bool:
+        """403エラーが閾値を超えた場合の強制Cookie更新（全サービス超積極的）"""
+        if error_count >= threshold:
+            service_name = self._detect_service_from_path()
+            print(f"🚨 403エラー{error_count}回検出 [{service_name}]: Cookie強制更新実行（閾値: {threshold}）")
+            self.clear_cache()
+            return True
+        return False
+    
+    def set_cache_duration(self, duration: int):
+        """キャッシュ有効期限を動的変更（秒単位）"""
+        old_duration = self.cache_duration
+        self.cache_duration = max(duration, self._min_cache_duration)  # 最小30秒を保証
+        service_name = self._detect_service_from_path()
+        print(f"⏰ Cookieキャッシュ有効期限変更 [{service_name}]: {old_duration}秒 → {self.cache_duration}秒")
+        
+    def get_cache_info(self) -> Dict[str, Any]:
+        """現在のキャッシュ状態情報を取得"""
+        current_time = time.time()
+        service_name = self._detect_service_from_path()
+        effective_duration = min(self.cache_duration, self._min_cache_duration)
+        
+        return {
+            "cached": self._cookies_cache is not None,
+            "cache_age": current_time - (self._cache_timestamp or 0) if self._cache_timestamp else None,
+            "cache_duration": self.cache_duration,
+            "effective_duration": effective_duration,
+            "service_name": service_name,
+            "global_optimization": self._global_optimization,
+            "min_duration": self._min_cache_duration,
+            "cookies_count": len(self._cookies_cache) if self._cookies_cache else 0,
+            "file_mtime": self._file_mtime,
+            "next_refresh_in": max(0, effective_duration - (current_time - (self._cache_timestamp or 0))) if self._cache_timestamp else 0
+        }
+    
+    def _detect_service_from_path(self) -> str:
+        """Cookieファイルパスからサービス名を検出"""
+        path_str = str(self.cookies_file)
+        if "tomarabbit" in path_str:
+            return "tomarabbit"
+        elif "book000_vrc" in path_str:
+            return "book000_vrc"
+        elif "book000" in path_str:
+            return "book000"
+        elif "authorizedkey" in path_str:
+            return "authorizedkey"
+        elif "tomachi_priv" in path_str:
+            return "tomachi_priv"
+        elif "ihc_amot" in path_str:
+            return "ihc_amot"
+        else:
+            return "unknown"
