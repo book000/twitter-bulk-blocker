@@ -24,6 +24,7 @@ check-cinnamon --module <name>    # 特定モジュールのみ
 | `health` | 長期ヘルス分析 | `check-cinnamon-health` |
 | `performance` | パフォーマンス指標・履歴比較 | `check-cinnamon-performance` |
 | `accounts` | アカウント別詳細分析・最適化提案 | `check-cinnamon-account-analysis` |
+| `processing` | 処理状態詳細分析・Cookie状態確認 | `check-cinnamon-processing-status` |
 
 ## 📊 基本使用方法
 
@@ -141,6 +142,19 @@ check-cinnamon-performance --compare  # 履歴比較分析
 ```bash
 check-cinnamon-account-analysis        # 全アカウント分析
 check-cinnamon-account-analysis --brief  # 簡潔版
+```
+
+### check-cinnamon-processing-status
+**処理状態詳細分析・Cookie状態確認**
+- 各アカウントの最新エラーメッセージ（5件）
+- 最後の成功処理ログ確認
+- Cookie状態の詳細追跡（再読み込み、更新状況）
+- 1時間の処理統計（試行数、成功数、403エラー数）
+- 処理停止の自動判定と警告
+- 全体的な処理健全性の評価
+
+```bash
+check-cinnamon-processing-status       # 処理状態詳細分析
 ```
 
 ## ⚡ パフォーマンス改善

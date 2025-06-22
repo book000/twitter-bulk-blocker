@@ -45,6 +45,7 @@ while [[ $# -gt 0 ]]; do
             echo "  health       長期ヘルス分析"
             echo "  performance  パフォーマンス指標・履歴比較"
             echo "  accounts     アカウント別詳細分析・最適化提案"
+            echo "  processing   処理状態詳細分析・Cookie状態確認"
             echo ""
             echo "例:"
             echo "  check-cinnamon                    # 基本チェック"
@@ -92,6 +93,9 @@ if [ -n "$MODULES" ]; then
                 ;;
             accounts)
                 .claude/commands/check-cinnamon-account-analysis
+                ;;
+            processing)
+                .claude/commands/check-cinnamon-processing-status
                 ;;
             *)
                 echo "❌ 不明なモジュール: $module"
