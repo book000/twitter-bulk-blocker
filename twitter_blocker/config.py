@@ -157,8 +157,8 @@ class CookieManager:
         self._cache_timestamp = None
         self._file_mtime = None
     
-    def force_refresh_on_error_threshold(self, error_count: int, threshold: int = 2) -> bool:
-        """403エラーが閾値を超えた場合の強制Cookie更新（より積極的）"""
+    def force_refresh_on_error_threshold(self, error_count: int, threshold: int = 5) -> bool:
+        """403エラーが閾値を超えた場合の強制Cookie更新（適正化）"""
         if error_count >= threshold:
             print(f"🚨 403エラー{error_count}回検出: Cookie強制更新実行（閾値: {threshold}）")
             self.clear_cache()
