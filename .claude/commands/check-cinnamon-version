@@ -1,0 +1,116 @@
+#!/bin/bash
+
+# check-cinnamon-version - バージョン情報分析専用モジュール
+
+set -e
+
+BRIEF=false
+
+# オプション解析
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --brief|-b)
+            BRIEF=true
+            shift
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
+if [ "$BRIEF" = false ]; then
+    echo "🔢 VERSION INFORMATION DETAILED ANALYSIS"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+fi
+
+# 稼働中のコンテナからバージョン情報を取得
+RUNNING_CONTAINER=$(ssh Cinnamon "docker ps --filter 'name=bulk-block-users' --format '{{.Names}}' | head -1")
+
+if [ -n "$RUNNING_CONTAINER" ]; then
+    if [ "$BRIEF" = true ]; then
+        echo "🏃 稼働中バージョン:"
+    else
+        echo "🏃 稼働中コンテナでのバージョン:"
+    fi
+    
+    # --versionオプションを試行
+    RUNNING_VERSION=$(ssh Cinnamon "docker exec $RUNNING_CONTAINER python3 -m twitter_blocker --version 2>/dev/null" | sed 's/^python3 -m twitter_blocker //' | head -1)
+    
+    if [ -n "$RUNNING_VERSION" ]; then
+        if [ "$BRIEF" = true ]; then
+            echo "  Version: $RUNNING_VERSION"
+        else
+            echo "  Container: $RUNNING_CONTAINER"
+            echo "  Version: $RUNNING_VERSION"
+        fi
+    else
+        if [ "$BRIEF" = true ]; then
+            echo "  Version: Legacy/Unknown"
+        else
+            echo "  Container: $RUNNING_CONTAINER"
+            echo "  ⚠️ --versionオプション未対応 (古いイメージ)"
+            echo "  Version: Legacy/Unknown (--versionオプション実装前)"
+        fi
+    fi
+else
+    echo "❌ 稼働中のコンテナが見つかりません"
+    exit 1
+fi
+
+if [ "$BRIEF" = false ]; then
+    echo ""
+fi
+
+# GitHub最新リリース情報を取得
+if [ "$BRIEF" = true ]; then
+    echo "🏷️ 最新リリース:"
+else
+    echo "🏷️ GitHub最新リリース情報:"
+fi
+
+LATEST_RELEASE=$(curl -s https://api.github.com/repos/book000/twitter-bulk-blocker/releases/latest | jq -r '.tag_name' 2>/dev/null)
+
+if [ -n "$LATEST_RELEASE" ] && [ "$LATEST_RELEASE" != "null" ]; then
+    if [ "$BRIEF" = false ]; then
+        RELEASE_DATE=$(curl -s https://api.github.com/repos/book000/twitter-bulk-blocker/releases/latest | jq -r '.published_at' 2>/dev/null)
+        RELEASE_URL=$(curl -s https://api.github.com/repos/book000/twitter-bulk-blocker/releases/latest | jq -r '.html_url' 2>/dev/null)
+        
+        echo "  Latest Release: $LATEST_RELEASE"
+        echo "  Release Date: Date: $(date -d "$RELEASE_DATE" '+%Y-%m-%d %H:%M:%S %Z' 2>/dev/null || echo "$RELEASE_DATE")"
+        echo "  Release URL: URL: $RELEASE_URL"
+    else
+        echo "  Latest: $LATEST_RELEASE"
+    fi
+    
+    # バージョン比較
+    if [ -n "$RUNNING_VERSION" ] && [ "$RUNNING_VERSION" != "Legacy/Unknown" ]; then
+        if [ "$RUNNING_VERSION" = "$LATEST_RELEASE" ]; then
+            echo "  ✅ Release-Image整合性: 一致"
+        else
+            echo "  ⚠️ バージョン不一致: 稼働中($RUNNING_VERSION) vs 最新($LATEST_RELEASE)"
+            if [ "$BRIEF" = false ]; then
+                echo "  📋 更新推奨: .claude/commands/auto-update-on-release"
+            fi
+        fi
+    else
+        echo "  ❓ バージョン比較不可: 稼働中バージョンが不明"
+    fi
+else
+    echo "  ❌ GitHub API取得失敗"
+fi
+
+# 最新イメージのバージョン（詳細モードのみ）
+if [ "$BRIEF" = false ]; then
+    echo ""
+    echo "📦 最新イメージのバージョン:"
+    
+    # ghcr.ioから最新イメージのタグを取得（簡略化）
+    LATEST_IMAGE_TAG=$(ssh Cinnamon "docker image ls ghcr.io/book000/twitter-bulk-blocker --format '{{.Tag}}' | grep -v '<none>' | head -1" 2>/dev/null || echo "Unknown")
+    
+    if [ "$LATEST_IMAGE_TAG" != "Unknown" ]; then
+        echo "  Latest Image (ghcr.io): $LATEST_IMAGE_TAG"
+    else
+        echo "  ⚠️ イメージタグ取得失敗"
+    fi
+fi
