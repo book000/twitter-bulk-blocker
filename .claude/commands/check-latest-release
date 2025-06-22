@@ -1,0 +1,274 @@
+#!/bin/bash
+
+# check-latest-release - GitHub最新リリース確認とバージョン比較
+#
+# 機能:
+# - GitHub APIで最新リリース情報を取得
+# - 現在稼働中バージョンとの比較
+# - リリースノートの表示
+# - 更新要否の自動判定
+
+set -e
+
+echo "=== GITHUB RELEASE VERSION CHECK ==="
+echo "Timestamp: $(date '+%Y-%m-%d %H:%M:%S')"
+echo
+
+# 設定
+GITHUB_REPO="book000/twitter-bulk-blocker"
+GITHUB_API_URL="https://api.github.com/repos/$GITHUB_REPO/releases"
+TIMEOUT_SECONDS=30
+SHOW_RELEASE_NOTES=false
+CHECK_RUNNING_VERSION=true
+DETAILED_OUTPUT=false
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --show-notes)
+            SHOW_RELEASE_NOTES=true
+            shift
+            ;;
+        --no-running-check)
+            CHECK_RUNNING_VERSION=false
+            shift
+            ;;
+        --detailed)
+            DETAILED_OUTPUT=true
+            shift
+            ;;
+        --timeout)
+            TIMEOUT_SECONDS="$2"
+            shift 2
+            ;;
+        --help)
+            echo "Usage: $0 [OPTIONS]"
+            echo ""
+            echo "Options:"
+            echo "  --show-notes        リリースノートを表示"
+            echo "  --no-running-check  稼働中バージョンの確認をスキップ"
+            echo "  --detailed          詳細情報を表示"
+            echo "  --timeout N         API取得のタイムアウト時間（秒、デフォルト: 30）"
+            echo "  --help              このヘルプを表示"
+            echo ""
+            echo "例:"
+            echo "  $0                      # 基本的なリリース確認"
+            echo "  $0 --show-notes         # リリースノート付き"
+            echo "  $0 --detailed           # 詳細情報付き"
+            exit 0
+            ;;
+        *)
+            echo "❌ 不明なオプション: $1"
+            echo "ヘルプを表示: $0 --help"
+            exit 1
+            ;;
+    esac
+done
+
+echo "🔍 GITHUB RELEASE INFORMATION"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# GitHub APIで最新リリース情報を取得
+echo "📡 GitHub APIから最新リリース情報を取得中..."
+echo "  Repository: $GITHUB_REPO"
+
+LATEST_RELEASE_JSON=$(timeout $TIMEOUT_SECONDS curl -s "$GITHUB_API_URL/latest" 2>/dev/null || echo "")
+
+if [ -z "$LATEST_RELEASE_JSON" ] || [[ "$LATEST_RELEASE_JSON" == *"rate limit"* ]] || [[ "$LATEST_RELEASE_JSON" == *"Not Found"* ]]; then
+    echo "❌ 最新リリース情報の取得に失敗しました"
+    echo "  原因: API接続エラー、レート制限、またはリポジトリアクセス問題"
+    echo "  手動確認: https://github.com/$GITHUB_REPO/releases"
+    exit 1
+fi
+
+# リリース情報の解析
+LATEST_TAG=$(echo "$LATEST_RELEASE_JSON" | grep '"tag_name"' | cut -d'"' -f4)
+LATEST_NAME=$(echo "$LATEST_RELEASE_JSON" | grep '"name"' | cut -d'"' -f4 | head -1)
+RELEASE_DATE=$(echo "$LATEST_RELEASE_JSON" | grep '"published_at"' | cut -d'"' -f4)
+RELEASE_URL=$(echo "$LATEST_RELEASE_JSON" | grep '"html_url"' | cut -d'"' -f4 | head -1)
+IS_PRERELEASE=$(echo "$LATEST_RELEASE_JSON" | grep '"prerelease"' | cut -d':' -f2 | tr -d ' ,' | head -1)
+
+if [ -z "$LATEST_TAG" ]; then
+    echo "❌ リリース情報の解析に失敗しました"
+    exit 1
+fi
+
+echo "✅ 最新リリース情報:"
+echo "  Tag: $LATEST_TAG"
+echo "  Name: $LATEST_NAME"
+echo "  Release Date: $(date -d "$RELEASE_DATE" '+%Y-%m-%d %H:%M:%S JST' 2>/dev/null || echo "$RELEASE_DATE")"
+echo "  URL: $RELEASE_URL"
+
+if [ "$IS_PRERELEASE" = "true" ]; then
+    echo "  ⚠️ Type: Pre-release"
+else
+    echo "  ✅ Type: Stable release"
+fi
+
+# 稼働中バージョンの確認（オプション）
+RUNNING_VERSION=""
+if [ "$CHECK_RUNNING_VERSION" = true ]; then
+    echo
+    echo "🏃 RUNNING VERSION CHECK"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    RUNNING_CONTAINER=$(ssh Cinnamon "docker ps --filter 'name=bulk-block-users' --format '{{.Names}}' | head -1" 2>/dev/null || echo "")
+    
+    if [ -n "$RUNNING_CONTAINER" ]; then
+        echo "📊 稼働中コンテナからバージョン確認:"
+        echo "  Container: $RUNNING_CONTAINER"
+        
+        RUNNING_VERSION=$(ssh Cinnamon "docker exec $RUNNING_CONTAINER python3 -m twitter_blocker --version 2>/dev/null" | sed 's/^python3 -m twitter_blocker //' || echo "")
+        
+        if [ -n "$RUNNING_VERSION" ]; then
+            echo "  Version: $RUNNING_VERSION"
+        else
+            echo "  ⚠️ バージョン取得失敗 (Legacy/Unknown)"
+            RUNNING_VERSION="Legacy/Unknown"
+        fi
+    else
+        echo "🔴 稼働中のコンテナが見つかりません"
+    fi
+fi
+
+# バージョン比較分析
+echo
+echo "📊 VERSION COMPARISON ANALYSIS"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+UPDATE_NEEDED=false
+UPDATE_PRIORITY="NONE"
+UPDATE_REASON=""
+
+# クリーンアップされたバージョンで比較
+LATEST_VERSION_CLEAN=$(echo "$LATEST_TAG" | sed 's/^v//')
+RUNNING_VERSION_CLEAN=$(echo "$RUNNING_VERSION" | sed 's/^v//' | sed 's/+dirty$//' | sed 's/\.dev[0-9]*$//')
+
+if [ -n "$RUNNING_VERSION" ] && [ "$RUNNING_VERSION" != "Legacy/Unknown" ]; then
+    echo "🔍 バージョン比較:"
+    echo "  稼働中: $RUNNING_VERSION"
+    echo "  最新版: $LATEST_TAG"
+    
+    if [ "$RUNNING_VERSION_CLEAN" != "$LATEST_VERSION_CLEAN" ]; then
+        UPDATE_NEEDED=true
+        
+        # リリース日時による緊急度判定
+        RELEASE_TIMESTAMP=$(date -d "$RELEASE_DATE" +%s 2>/dev/null || echo "0")
+        CURRENT_TIMESTAMP=$(date +%s)
+        HOURS_SINCE_RELEASE=$(( (CURRENT_TIMESTAMP - RELEASE_TIMESTAMP) / 3600 ))
+        
+        if [ "$HOURS_SINCE_RELEASE" -lt 24 ]; then
+            UPDATE_PRIORITY="HIGH"
+            UPDATE_REASON="新しいリリースが ${HOURS_SINCE_RELEASE}時間前に公開されました"
+        elif [ "$HOURS_SINCE_RELEASE" -lt 168 ]; then  # 1週間
+            UPDATE_PRIORITY="MEDIUM"
+            UPDATE_REASON="新しいリリースが $(( HOURS_SINCE_RELEASE / 24 ))日前に公開されました"
+        else
+            UPDATE_PRIORITY="LOW"
+            UPDATE_REASON="古いバージョンが稼働中です（$(( HOURS_SINCE_RELEASE / 24 ))日前のリリース）"
+        fi
+        
+        echo "  ⚠️ バージョン不一致検出"
+        echo "  🚨 更新が必要: $UPDATE_PRIORITY priority"
+        echo "  💡 理由: $UPDATE_REASON"
+    else
+        echo "  ✅ バージョン一致: 最新版が稼働中"
+    fi
+elif [ "$RUNNING_VERSION" = "Legacy/Unknown" ]; then
+    UPDATE_NEEDED=true
+    UPDATE_PRIORITY="CRITICAL"
+    UPDATE_REASON="レガシーイメージ（--versionオプション未対応）が稼働中"
+    echo "🚨 レガシーイメージ検出:"
+    echo "  稼働中: Legacy/Unknown"
+    echo "  最新版: $LATEST_TAG"
+    echo "  ❗ 緊急更新が必要: CRITICAL priority"
+    echo "  💡 理由: $UPDATE_REASON"
+else
+    echo "ℹ️ 稼働中バージョン不明のため比較をスキップ"
+fi
+
+# リリースノート表示（オプション）
+if [ "$SHOW_RELEASE_NOTES" = true ]; then
+    echo
+    echo "📝 RELEASE NOTES"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    RELEASE_BODY=$(echo "$LATEST_RELEASE_JSON" | grep '"body"' | cut -d'"' -f4 | sed 's/\\n/\n/g' | sed 's/\\r//g')
+    
+    if [ -n "$RELEASE_BODY" ]; then
+        echo "$RELEASE_BODY"
+    else
+        echo "ℹ️ リリースノートが見つかりません"
+    fi
+fi
+
+# 詳細情報表示（オプション）
+if [ "$DETAILED_OUTPUT" = true ]; then
+    echo
+    echo "🔍 DETAILED RELEASE INFORMATION"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    # アセット情報
+    ASSETS_COUNT=$(echo "$LATEST_RELEASE_JSON" | grep -o '"name"' | wc -l)
+    echo "📦 Release Assets: $ASSETS_COUNT個"
+    
+    # タグ情報
+    TARGET_COMMITISH=$(echo "$LATEST_RELEASE_JSON" | grep '"target_commitish"' | cut -d'"' -f4)
+    echo "🏷️ Target Branch: $TARGET_COMMITISH"
+    
+    # 作者情報
+    AUTHOR_LOGIN=$(echo "$LATEST_RELEASE_JSON" | grep '"login"' | cut -d'"' -f4 | head -1)
+    echo "👤 Author: $AUTHOR_LOGIN"
+fi
+
+# アクション提案
+echo
+echo "🎯 RECOMMENDED ACTIONS"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+if [ "$UPDATE_NEEDED" = true ]; then
+    case $UPDATE_PRIORITY in
+        "CRITICAL")
+            echo "🚨 CRITICAL: 即座の更新が必要"
+            echo "  実行コマンド: .claude/commands/update-containers --force"
+            ;;
+        "HIGH")
+            echo "⚠️ HIGH: 24時間以内の更新を推奨"
+            echo "  実行コマンド: .claude/commands/update-containers"
+            ;;
+        "MEDIUM")
+            echo "💡 MEDIUM: 計画的な更新を推奨"
+            echo "  実行コマンド: .claude/commands/update-containers"
+            ;;
+        "LOW")
+            echo "📋 LOW: 時間のある時に更新"
+            echo "  実行コマンド: .claude/commands/update-containers"
+            ;;
+    esac
+    
+    echo "  📋 理由: $UPDATE_REASON"
+    echo "  📈 更新後の効果: 最新機能、セキュリティ修正、パフォーマンス改善"
+    
+    # Docker imageの手動pull確認
+    echo
+    echo "🐳 手動確認オプション:"
+    echo "  最新イメージの確認:"
+    echo "    ssh Cinnamon 'docker pull ghcr.io/book000/twitter-bulk-blocker:latest'"
+    echo "  イメージ比較:"
+    echo "    ssh Cinnamon 'docker images | grep twitter-bulk-blocker'"
+else
+    echo "✅ アクション不要: 最新版が稼働中"
+    echo "  💡 定期確認: 24時間後に再度確認することを推奨"
+fi
+
+echo
+echo "🔗 関連リンク:"
+echo "  📋 Releases: https://github.com/$GITHUB_REPO/releases"
+echo "  📊 監視コマンド: .claude/commands/check-cinnamon"
+echo "  🔄 継続監視: .claude/commands/monitor-releases"
+
+# 終了コード（自動化スクリプト用）
+if [ "$UPDATE_NEEDED" = true ]; then
+    exit 1  # 更新が必要
+else
+    exit 0  # 更新不要
+fi
