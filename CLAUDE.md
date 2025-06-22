@@ -123,8 +123,14 @@ python3 -m twitter_blocker --all --disable-header-enhancement  # 緊急時無効
 /project:optimize-batch [target]           # バッチ処理最適化
 /project:test-feature [feature_name]       # 機能テスト実行
 
+# バージョン管理・リリース監視
+.claude/commands/check-latest-release      # GitHub最新リリース確認
+.claude/commands/update-containers         # コンテナイメージ更新
+.claude/commands/monitor-releases          # リリース監視・自動更新
+.claude/commands/wait-for-deployment       # デプロイ完了待機
+
 # 監視ツールスイート v2.1 (長期履歴対応)
-.claude/commands/check-cinnamon             # 包括的分析 (24時間エラー履歴対応)
+.claude/commands/check-cinnamon             # 包括的分析 (バージョン情報・24時間エラー履歴対応)
 .claude/cinnamon-monitor-suite.sh [mode]   # 統合監視インターフェース (非対話型)
 .claude/cinnamon-logs-ai-optimized.sh      # AI最適化版・構造化出力
 .claude/cinnamon-logs.sh                   # 基本版 (参考用)
@@ -158,10 +164,12 @@ python3 -m twitter_blocker --all --disable-header-enhancement  # 緊急時無効
 ### 監視ツール使い分けガイド
 | 状況 | 推奨ツール | 実行方法 | 備考 |
 |------|------------|----------|------|
-| **📊 包括的分析（推奨）** | メイン版 | `.claude/commands/check-cinnamon` | 全機能搭載、詳細分析 |
+| **📊 包括的分析（推奨）** | メイン版 | `.claude/commands/check-cinnamon` | バージョン情報・全機能搭載・詳細分析 |
+| **🔢 バージョン確認のみ** | リリース確認 | `.claude/commands/check-latest-release` | GitHub最新リリース・稼働中比較 |
+| **🚀 コンテナ更新** | 更新コマンド | `.claude/commands/update-containers` | 安全な更新・デプロイ待機統合 |
+| **🔄 自動リリース監視** | リリース監視 | `.claude/commands/monitor-releases --auto-update` | 新リリース検出・自動更新 |
 | **🔍 詳細分析** | 包括的分析（旧版） | `.claude/commands/check-cinnamon-original-backup` | 比較・参照用 |
 | **🆕 長期履歴分析** | メイン版で対応 | `.claude/commands/check-cinnamon` | 24時間エラー履歴対応 |
-| **🔄 自己改善・最適化** | メイン版で対応 | `.claude/commands/check-cinnamon` | 実行メタデータ収集 |
 | **Claude Code標準** | AI最適化版 | `cinnamon-logs-ai-optimized.sh` | 構造化出力 |
 | **問題詳細調査** | AI最適化版 | `cinnamon-logs-ai-optimized.sh` | 根本原因分析 |
 | **基本チェック** | 統合インターフェース | `cinnamon-monitor-suite.sh basic` | 基本監視 |
@@ -205,6 +213,13 @@ python3 -m twitter_blocker --all --disable-header-enhancement  # 緊急時無効
 - **動的ヘッダー生成**: Twitter/Xアンチボットシステム対応
 - **段階的導入**: `--disable-header-enhancement`、`--enable-forwarded-for`オプション
 - **詳細**: `.claude/guides/api-patterns.md` 参照
+
+### 🔢 新機能: 高度なバージョン管理システム
+- **動的バージョン取得**: Git・環境変数・ファイルベースの優先順位システム
+- **--versionオプション**: `python3 -m twitter_blocker --version` で現在バージョン表示
+- **GitHub連携**: リリース監視・自動更新・整合性確認
+- **運用統合**: check-cinnamon、update-containers、monitor-releasesの連携システム
+- **Docker対応**: APPLICATION_VERSION、.app-versionファイル埋め込み
 
 ---
 

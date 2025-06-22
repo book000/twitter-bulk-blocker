@@ -1,0 +1,312 @@
+#!/bin/bash
+
+# monitor-releases - GitHub新規リリース監視と自動アクション実行
+#
+# 機能:
+# - GitHub APIで新規リリースを継続監視
+# - 新しいリリース検出時の自動アクション実行
+# - ログ記録とアラート機能
+# - カスタマイズ可能な監視間隔と動作設定
+
+set -e
+
+echo "=== GITHUB RELEASE MONITORING SYSTEM ==="
+echo "Timestamp: $(date '+%Y-%m-%d %H:%M:%S')"
+echo
+
+# 設定
+GITHUB_REPO="book000/twitter-bulk-blocker"
+GITHUB_API_URL="https://api.github.com/repos/$GITHUB_REPO/releases/latest"
+STATE_FILE="/tmp/twitter-bulk-blocker-release-monitor.state"
+LOG_FILE="/tmp/twitter-bulk-blocker-release-monitor.log"
+
+# デフォルト設定
+CHECK_INTERVAL=300  # 5分間隔
+MAX_DURATION=3600   # 1時間で終了
+AUTO_UPDATE=false   # 自動更新を実行するか
+DRY_RUN=false      # テストモード
+VERBOSE=false      # 詳細ログ
+ALERT_ONLY=false   # アラートのみ（更新実行なし）
+ONE_SHOT=false     # 1回だけ実行
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --interval)
+            CHECK_INTERVAL="$2"
+            shift 2
+            ;;
+        --duration)
+            MAX_DURATION="$2"
+            shift 2
+            ;;
+        --auto-update)
+            AUTO_UPDATE=true
+            shift
+            ;;
+        --dry-run)
+            DRY_RUN=true
+            shift
+            ;;
+        --verbose)
+            VERBOSE=true
+            shift
+            ;;
+        --alert-only)
+            ALERT_ONLY=true
+            shift
+            ;;
+        --one-shot)
+            ONE_SHOT=true
+            shift
+            ;;
+        --state-file)
+            STATE_FILE="$2"
+            shift 2
+            ;;
+        --log-file)
+            LOG_FILE="$2"
+            shift 2
+            ;;
+        --help)
+            echo "Usage: $0 [OPTIONS]"
+            echo ""
+            echo "Options:"
+            echo "  --interval N        チェック間隔（秒、デフォルト: 300）"
+            echo "  --duration N        最大監視時間（秒、デフォルト: 3600）"
+            echo "  --auto-update       新リリース検出時に自動更新を実行"
+            echo "  --dry-run           テストモード（実際の更新は実行しない）"
+            echo "  --verbose           詳細ログを表示"
+            echo "  --alert-only        アラートのみ（更新は実行しない）"
+            echo "  --one-shot          1回だけチェックして終了"
+            echo "  --state-file FILE   状態ファイルのパス"
+            echo "  --log-file FILE     ログファイルのパス"
+            echo "  --help              このヘルプを表示"
+            echo ""
+            echo "例:"
+            echo "  $0                          # 基本監視（5分間隔、1時間）"
+            echo "  $0 --auto-update            # 自動更新付き監視"
+            echo "  $0 --interval 60            # 1分間隔でチェック"
+            echo "  $0 --one-shot               # 1回だけチェック"
+            echo "  $0 --dry-run --verbose      # テストモード（詳細ログ付き）"
+            exit 0
+            ;;
+        *)
+            echo "❌ 不明なオプション: $1"
+            echo "ヘルプを表示: $0 --help"
+            exit 1
+            ;;
+    esac
+done
+
+# ログ関数
+log_message() {
+    local level="$1"
+    local message="$2"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    local log_entry="[$timestamp] [$level] $message"
+    
+    echo "$log_entry"
+    echo "$log_entry" >> "$LOG_FILE"
+    
+    if [ "$VERBOSE" = true ] || [ "$level" = "ERROR" ] || [ "$level" = "ALERT" ]; then
+        echo "$log_entry" >&2
+    fi
+}
+
+# 現在のリリース情報を取得
+get_current_release() {
+    local api_response=$(timeout 30 curl -s "$GITHUB_API_URL" 2>/dev/null || echo "")
+    
+    if [ -z "$api_response" ] || [[ "$api_response" == *"rate limit"* ]] || [[ "$api_response" == *"Not Found"* ]]; then
+        log_message "ERROR" "GitHub API取得失敗"
+        return 1
+    fi
+    
+    local tag_name=$(echo "$api_response" | grep '"tag_name"' | cut -d'"' -f4)
+    local published_at=$(echo "$api_response" | grep '"published_at"' | cut -d'"' -f4)
+    
+    if [ -z "$tag_name" ]; then
+        log_message "ERROR" "リリース情報解析失敗"
+        return 1
+    fi
+    
+    echo "${tag_name}|${published_at}"
+    return 0
+}
+
+# 状態ファイルの読み込み
+load_state() {
+    if [ -f "$STATE_FILE" ]; then
+        cat "$STATE_FILE"
+    else
+        echo ""
+    fi
+}
+
+# 状態ファイルの保存
+save_state() {
+    local state="$1"
+    echo "$state" > "$STATE_FILE"
+    log_message "INFO" "状態保存: $state"
+}
+
+# 新リリース検出時のアクション実行
+execute_update_action() {
+    local new_tag="$1"
+    local published_at="$2"
+    
+    log_message "ALERT" "新リリース検出: $new_tag (公開日時: $published_at)"
+    
+    if [ "$DRY_RUN" = true ]; then
+        log_message "INFO" "[DRY-RUN] 実際の更新はスキップ"
+        return 0
+    fi
+    
+    if [ "$ALERT_ONLY" = true ]; then
+        log_message "INFO" "アラートのみモード: 更新は実行しない"
+        return 0
+    fi
+    
+    if [ "$AUTO_UPDATE" = true ]; then
+        log_message "INFO" "自動更新を開始..."
+        
+        # 更新前の確認
+        log_message "INFO" "更新前状態確認"
+        CURRENT_CONTAINERS=$(ssh Cinnamon "docker ps --filter 'name=bulk-block-users' --format '{{.Names}}' | wc -l" 2>/dev/null || echo "0")
+        log_message "INFO" "稼働中コンテナ数: $CURRENT_CONTAINERS"
+        
+        # docker compose downを実行
+        log_message "INFO" "docker compose down実行"
+        if ssh Cinnamon "cd /opt/docker && docker compose down" 2>>"$LOG_FILE"; then
+            log_message "INFO" "docker compose down成功"
+            
+            # wait-for-deploymentを呼び出し
+            log_message "INFO" "デプロイ完了待機開始"
+            SCRIPT_DIR="$(dirname "$(realpath "$0")")"
+            
+            if "$SCRIPT_DIR/wait-for-deployment" --timeout 30 2>>"$LOG_FILE"; then
+                log_message "SUCCESS" "自動更新完了: $new_tag"
+                
+                # 更新後の確認
+                NEW_VERSION=$(ssh Cinnamon "docker ps --filter 'name=bulk-block-users' --format '{{.Names}}' | head -1 | xargs -I {} docker exec {} python3 -m twitter_blocker --version 2>/dev/null" | sed 's/^python3 -m twitter_blocker //' || echo "Unknown")
+                log_message "INFO" "更新後バージョン: $NEW_VERSION"
+            else
+                log_message "ERROR" "デプロイ完了待機に失敗"
+                return 1
+            fi
+        else
+            log_message "ERROR" "docker compose down失敗"
+            return 1
+        fi
+    else
+        log_message "INFO" "手動更新が必要です"
+        log_message "INFO" "実行コマンド: .claude/commands/update-containers"
+    fi
+}
+
+# メイン監視ループ
+main_monitoring_loop() {
+    local start_time=$(date +%s)
+    local end_time=$((start_time + MAX_DURATION))
+    local check_count=0
+    
+    log_message "INFO" "監視開始 (間隔: ${CHECK_INTERVAL}秒, 最大時間: ${MAX_DURATION}秒)"
+    
+    # 初期状態の取得
+    local current_state=$(load_state)
+    log_message "INFO" "前回状態: ${current_state:-"なし"}"
+    
+    while true; do
+        check_count=$((check_count + 1))
+        local current_time=$(date +%s)
+        
+        log_message "INFO" "チェック #$check_count 実行中..."
+        
+        # 現在のリリース情報を取得
+        local release_info=$(get_current_release)
+        if [ $? -ne 0 ]; then
+            log_message "ERROR" "リリース情報取得失敗 (チェック #$check_count)"
+            if [ "$ONE_SHOT" = true ]; then
+                exit 1
+            fi
+            sleep "$CHECK_INTERVAL"
+            continue
+        fi
+        
+        local current_tag=$(echo "$release_info" | cut -d'|' -f1)
+        local current_published=$(echo "$release_info" | cut -d'|' -f2)
+        
+        log_message "INFO" "現在のリリース: $current_tag"
+        
+        # 新リリース検出
+        if [ -n "$current_state" ] && [ "$current_state" != "$release_info" ]; then
+            local old_tag=$(echo "$current_state" | cut -d'|' -f1)
+            log_message "ALERT" "新リリース検出: $old_tag → $current_tag"
+            
+            execute_update_action "$current_tag" "$current_published"
+            
+            # 状態を更新
+            save_state "$release_info"
+        elif [ -z "$current_state" ]; then
+            log_message "INFO" "初回実行: 現在のリリースを状態に保存"
+            save_state "$release_info"
+        else
+            log_message "INFO" "新リリースなし: $current_tag"
+        fi
+        
+        # One-shotモードまたは時間制限チェック
+        if [ "$ONE_SHOT" = true ]; then
+            log_message "INFO" "One-shotモード: 監視終了"
+            break
+        fi
+        
+        if [ "$current_time" -gt "$end_time" ]; then
+            log_message "INFO" "時間制限到達: 監視終了"
+            break
+        fi
+        
+        # 次のチェックまで待機
+        log_message "INFO" "次のチェックまで ${CHECK_INTERVAL}秒待機..."
+        sleep "$CHECK_INTERVAL"
+    done
+    
+    log_message "INFO" "監視完了 (総チェック回数: $check_count)"
+}
+
+# 設定表示
+echo "⚙️ MONITORING CONFIGURATION"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "📊 監視設定:"
+echo "  Repository: $GITHUB_REPO"
+echo "  チェック間隔: ${CHECK_INTERVAL}秒"
+if [ "$ONE_SHOT" = false ]; then
+    echo "  最大監視時間: ${MAX_DURATION}秒 ($(($MAX_DURATION / 60))分)"
+else
+    echo "  実行モード: One-shot"
+fi
+echo "  自動更新: $([ "$AUTO_UPDATE" = true ] && echo "有効" || echo "無効")"
+echo "  テストモード: $([ "$DRY_RUN" = true ] && echo "有効" || echo "無効")"
+echo "  アラートのみ: $([ "$ALERT_ONLY" = true ] && echo "有効" || echo "無効")"
+echo "  状態ファイル: $STATE_FILE"
+echo "  ログファイル: $LOG_FILE"
+echo ""
+
+# ログファイルの初期化
+log_message "INFO" "リリース監視開始"
+
+# メイン監視ループ実行
+main_monitoring_loop
+
+echo
+echo "🎉 MONITORING COMPLETED"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "📊 監視完了サマリー:"
+echo "  ログファイル: $LOG_FILE"
+echo "  状態ファイル: $STATE_FILE"
+echo ""
+echo "🔗 関連コマンド:"
+echo "  📋 最新リリース確認: .claude/commands/check-latest-release"
+echo "  🔄 手動更新: .claude/commands/update-containers"
+echo "  📊 状態確認: .claude/commands/check-cinnamon"
+
+log_message "INFO" "リリース監視完了"

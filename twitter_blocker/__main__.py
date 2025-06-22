@@ -9,13 +9,20 @@ import argparse
 import os
 import sys
 
-from . import BulkBlockManager
+from . import BulkBlockManager, __version__
 from .stats import show_stats
 
 
 def main():
     parser = argparse.ArgumentParser(
         prog="python3 -m twitter_blocker", description="Twitter一括ブロックツール"
+    )
+    
+    # バージョン情報表示
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}"
     )
     parser.add_argument(
         "--all", action="store_true", help="全ユーザーを処理（テストではなく本格実行）"

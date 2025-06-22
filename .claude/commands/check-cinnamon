@@ -10,6 +10,111 @@ SCRIPT_START_TIME=$(date +%s)
 
 echo "=== CINNAMON SERVER COMPREHENSIVE CHECK ==="
 echo "Timestamp: $(date '+%Y-%m-%d %H:%M:%S')"
+
+# Cinnamonサーバーで稼働中のバージョン情報を取得
+echo "🔢 VERSION INFORMATION"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# 稼働中のコンテナからバージョン情報を取得
+RUNNING_CONTAINER=$(ssh Cinnamon "docker ps --filter 'name=bulk-block-users' --format '{{.Names}}' | head -1")
+if [ -n "$RUNNING_CONTAINER" ]; then
+    echo "🏃 稼働中コンテナでのバージョン:"
+    
+    # 新しい--versionオプションを試行
+    RUNNING_VERSION=$(ssh Cinnamon "docker exec $RUNNING_CONTAINER python3 -m twitter_blocker --version 2>/dev/null" | sed 's/^python3 -m twitter_blocker //')
+    
+    if [ -n "$RUNNING_VERSION" ]; then
+        echo "  Container: $RUNNING_CONTAINER"
+        echo "  Version: $RUNNING_VERSION"
+    else
+        # --versionオプションが利用できない場合、代替手段を試行
+        echo "  Container: $RUNNING_CONTAINER"
+        echo "  ⚠️ --versionオプション未対応 (古いイメージ)"
+        
+        # イメージ作成日時から推測
+        IMAGE_INFO=$(ssh Cinnamon "docker inspect $RUNNING_CONTAINER --format '{{.Config.Image}} {{.Created}}'")
+        echo "  Image Info: $IMAGE_INFO"
+        
+        # APPLICATION_VERSIONまたは.app-versionファイルがあるかチェック
+        ENV_VERSION=$(ssh Cinnamon "docker exec $RUNNING_CONTAINER printenv APPLICATION_VERSION 2>/dev/null")
+        if [ -n "$ENV_VERSION" ]; then
+            echo "  Env Version: $ENV_VERSION"
+        else
+            APP_VERSION=$(ssh Cinnamon "docker exec $RUNNING_CONTAINER cat .app-version 2>/dev/null")
+            if [ -n "$APP_VERSION" ]; then
+                echo "  File Version: $APP_VERSION"
+            else
+                echo "  Version: Legacy/Unknown (--versionオプション実装前)"
+            fi
+        fi
+    fi
+else
+    echo "🔴 稼働中のコンテナなし - 停止中コンテナから確認:"
+    LATEST_CONTAINER=$(ssh Cinnamon "docker ps -a --filter 'name=bulk-block-users' --format '{{.CreatedAt}}\t{{.Names}}' | sort -r | head -1 | cut -f2")
+    if [ -n "$LATEST_CONTAINER" ]; then
+        echo "  Latest Container: $LATEST_CONTAINER"
+        
+        # 停止中コンテナのイメージを使って新規コンテナでバージョン確認
+        CONTAINER_IMAGE=$(ssh Cinnamon "docker inspect $LATEST_CONTAINER --format '{{.Config.Image}}'")
+        echo "  Container Image: $CONTAINER_IMAGE"
+        
+        STOPPED_VERSION=$(ssh Cinnamon "docker run --rm --entrypoint python3 $CONTAINER_IMAGE -m twitter_blocker --version 2>/dev/null" | sed 's/^python3 -m twitter_blocker //')
+        if [ -n "$STOPPED_VERSION" ]; then
+            echo "  Version: $STOPPED_VERSION"
+        else
+            echo "  ⚠️ --versionオプション未対応 (古いイメージ)"
+        fi
+    else
+        echo "  ❌ コンテナが見つかりません"
+    fi
+fi
+
+# CI/CDから配布された最新イメージのバージョン確認
+echo
+echo "📦 最新イメージのバージョン:"
+IMAGE_VERSION=$(ssh Cinnamon "timeout 30 docker run --rm --entrypoint python3 ghcr.io/book000/twitter-bulk-blocker:latest -m twitter_blocker --version 2>/dev/null" | sed 's/^python3 -m twitter_blocker //')
+if [ -n "$IMAGE_VERSION" ]; then
+    echo "  Latest Image (ghcr.io): $IMAGE_VERSION"
+else
+    echo "  ⚠️ 最新イメージのバージョン取得失敗 (ネットワークエラーまたは古いイメージ)"
+    
+    # ローカルに保存されているイメージからバージョン確認を試行
+    LOCAL_IMAGE_VERSION=$(ssh Cinnamon "timeout 15 docker run --rm --entrypoint python3 twitter-bulk-blocker:latest -m twitter_blocker --version 2>/dev/null" | sed 's/^python3 -m twitter_blocker //')
+    if [ -n "$LOCAL_IMAGE_VERSION" ]; then
+        echo "  Local Image: $LOCAL_IMAGE_VERSION"
+    fi
+fi
+
+# GitHub最新リリース情報の確認
+echo
+echo "🏷️ GitHub最新リリース情報:"
+SCRIPT_DIR="$(dirname "$(realpath "$0")")"
+GITHUB_RELEASE_INFO=$("$SCRIPT_DIR/check-latest-release" --no-running-check 2>/dev/null || echo "")
+
+if [ -n "$GITHUB_RELEASE_INFO" ]; then
+    GITHUB_TAG=$(echo "$GITHUB_RELEASE_INFO" | grep "Tag:" | cut -d' ' -f4)
+    GITHUB_RELEASE_DATE=$(echo "$GITHUB_RELEASE_INFO" | grep "Release Date:" | cut -d' ' -f4- | head -1)
+    GITHUB_RELEASE_URL=$(echo "$GITHUB_RELEASE_INFO" | grep "URL:" | cut -d' ' -f3-)
+    
+    echo "  Latest Release: $GITHUB_TAG"
+    echo "  Release Date: $GITHUB_RELEASE_DATE"
+    if [ -n "$GITHUB_RELEASE_URL" ]; then
+        echo "  Release URL: $GITHUB_RELEASE_URL"
+    fi
+    
+    # リリースとイメージの整合性確認
+    if [ -n "$IMAGE_VERSION" ] && [ -n "$GITHUB_TAG" ]; then
+        GITHUB_VERSION_CLEAN=$(echo "$GITHUB_TAG" | sed 's/^v//')
+        if [ "$GITHUB_VERSION_CLEAN" = "$IMAGE_VERSION" ]; then
+            echo "  ✅ Release-Image整合性: 一致"
+        else
+            echo "  ⚠️ Release-Image不整合: Release($GITHUB_TAG) vs Image($IMAGE_VERSION)"
+            echo "     → イメージビルド遅延またはキャッシュ問題の可能性"
+        fi
+    fi
+else
+    echo "  ⚠️ GitHub リリース情報取得失敗"
+fi
 echo
 
 # 1. 基本監視項目の実行
@@ -2057,24 +2162,152 @@ echo "🔍 Analysis coverage: 100% (認証・API・ネットワーク・パフ�
 echo "📈 Predictive accuracy: Enhanced with historical trend analysis"
 echo "🎯 Actionable insights: $(echo ${#URGENT_ISSUES[@]} + ${#SHORT_TERM_ISSUES[@]} + ${#LONG_TERM_OPTIMIZATIONS[@]} | bc) specific recommendations"
 
+# バージョン分析とアクション提案
+echo
+echo "🔢 VERSION ANALYSIS & RECOMMENDATIONS"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+VERSION_NEEDS_UPDATE=false
+VERSION_RECOMMENDATIONS=()
+
+# 包括的バージョン不整合チェック
+if [ -n "$RUNNING_VERSION" ] && [ -n "$IMAGE_VERSION" ]; then
+    if [ "$RUNNING_VERSION" != "$IMAGE_VERSION" ]; then
+        echo "⚠️ バージョン不整合検出:"
+        echo "  稼働中: $RUNNING_VERSION"
+        echo "  最新イメージ: $IMAGE_VERSION"
+        if [ -n "$GITHUB_TAG" ]; then
+            echo "  GitHub最新: $GITHUB_TAG"
+        fi
+        VERSION_NEEDS_UPDATE=true
+        VERSION_RECOMMENDATIONS+=("コンテナイメージの更新が必要")
+    else
+        echo "✅ 稼働中・イメージ整合性: 一致 ($RUNNING_VERSION)"
+        
+        # GitHub リリースとの比較も確認
+        if [ -n "$GITHUB_TAG" ]; then
+            GITHUB_VERSION_CLEAN=$(echo "$GITHUB_TAG" | sed 's/^v//')
+            if [ "$RUNNING_VERSION" != "$GITHUB_VERSION_CLEAN" ]; then
+                echo "⚠️ GitHub リリースとの不整合:"
+                echo "  稼働中: $RUNNING_VERSION"
+                echo "  GitHub最新: $GITHUB_TAG"
+                VERSION_NEEDS_UPDATE=true
+                VERSION_RECOMMENDATIONS+=("GitHub最新リリースに合わせた更新")
+            else
+                echo "✅ 全バージョン整合性: 稼働中・イメージ・GitHub全て一致"
+            fi
+        fi
+    fi
+elif [[ "$RUNNING_VERSION" == *"Legacy/Unknown"* ]] || [ -z "$RUNNING_VERSION" ]; then
+    echo "🔄 古いイメージ検出:"
+    echo "  稼働中: Legacy/Unknown (--versionオプション未対応)"
+    if [ -n "$IMAGE_VERSION" ]; then
+        echo "  最新イメージ: $IMAGE_VERSION"
+    fi
+    if [ -n "$GITHUB_TAG" ]; then
+        echo "  GitHub最新: $GITHUB_TAG"
+    fi
+    VERSION_NEEDS_UPDATE=true
+    VERSION_RECOMMENDATIONS+=("最新機能を利用するためイメージ更新を強く推奨")
+elif [ -z "$IMAGE_VERSION" ]; then
+    echo "⚠️ 最新イメージバージョン取得失敗"
+    if [ -n "$GITHUB_TAG" ]; then
+        echo "  GitHub最新リリース: $GITHUB_TAG は確認済み"
+        VERSION_RECOMMENDATIONS+=("GitHubリリースは存在するため、ネットワーク接続またはレジストリ状況を確認")
+    else
+        VERSION_RECOMMENDATIONS+=("ネットワーク接続またはレジストリ状況を確認")
+    fi
+else
+    echo "ℹ️ バージョン状況:"
+    echo "  稼働中: $RUNNING_VERSION"
+    echo "  最新版確認: 失敗"
+fi
+
+# アクション提案
+echo
+if [ "$VERSION_NEEDS_UPDATE" = true ]; then
+    echo "🚀 CONTAINER UPDATE ACTIONS:"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "📋 推奨アクション:"
+    for recommendation in "${VERSION_RECOMMENDATIONS[@]}"; do
+        echo "  • $recommendation"
+    done
+    echo
+    echo "🔧 更新実行コマンド:"
+    echo "  基本更新:"
+    echo "    .claude/commands/update-containers"
+    echo ""
+    echo "  強制更新（確認スキップ）:"
+    echo "    .claude/commands/update-containers --force"
+    echo ""
+    echo "  更新のみ（待機なし）:"
+    echo "    .claude/commands/update-containers --skip-wait"
+    echo ""
+    echo "  カスタムタイムアウト（60分）:"
+    echo "    .claude/commands/update-containers --timeout 60"
+    echo ""
+    echo "🔄 リリース監視・自動更新:"
+    echo "    .claude/commands/monitor-releases --auto-update"
+    echo ""
+    echo "📋 リリース確認のみ:"
+    echo "    .claude/commands/check-latest-release --show-notes"
+    echo ""
+    echo "⏳ 予想所要時間: 5-30分（イメージサイズとネットワーク速度に依存）"
+    echo "📊 ダウンタイム: docker compose down → pull → up 期間のみ"
+    
+    # 緊急度判定
+    if [[ "$RUNNING_VERSION" == *"Legacy/Unknown"* ]]; then
+        echo "🚨 緊急度: HIGH - レガシーイメージは新機能・セキュリティ修正が未適用"
+        URGENT_ISSUES+=("レガシーイメージの更新")
+    else
+        echo "⚠️ 緊急度: MEDIUM - 機能・パフォーマンス改善の恩恵を受けるため更新推奨"
+        SHORT_TERM_ISSUES+=("コンテナイメージの更新")
+    fi
+else
+    echo "✅ バージョン管理状況: 良好"
+fi
+
 # ユーザーへの次のステップ提案
 echo
 echo "🎯 RECOMMENDED NEXT STEPS:"
+
+# バージョン関連の緊急アクション
+if [ "$VERSION_NEEDS_UPDATE" = true ] && [[ "$RUNNING_VERSION" == *"Legacy/Unknown"* ]]; then
+    echo "  0. 🚨 CRITICAL: Container image update required immediately"
+    echo "     → .claude/commands/update-containers --force"
+    echo ""
+fi
+
 if [ ${#URGENT_ISSUES[@]} -gt 0 ]; then
     echo "  1. 🚨 URGENT: Address immediate issues within 10 minutes"
     echo "     → 認証エラーの解決、エラーサービスの調査"
+    if [ "$VERSION_NEEDS_UPDATE" = true ] && [[ "$RUNNING_VERSION" != *"Legacy/Unknown"* ]]; then
+        echo "     → コンテナイメージの更新"
+    fi
 fi
 if [ ${#SHORT_TERM_ISSUES[@]} -gt 0 ]; then
     echo "  2. ⚠️ SHORT-TERM: Plan improvements for next 24 hours"
     echo "     → エラーパターン分析、パフォーマンス最適化"
+    if [ "$VERSION_NEEDS_UPDATE" = true ] && [[ "$RUNNING_VERSION" != *"Legacy/Unknown"* ]]; then
+        echo "     → コンテナイメージの更新"
+    fi
 fi
 if [ ${#LONG_TERM_OPTIMIZATIONS[@]} -gt 0 ]; then
     echo "  3. 🔧 LONG-TERM: Strategic improvements over next week"
     echo "     → 監視システム強化、自動化機能の実装"
 fi
 
-echo "  4. 🔄 継続監視: $NEXT_CHECK_INTERVAL 後に再チェック実行"
-echo "  5. 📊 詳細調査: 必要に応じて .claude/cinnamon-logs-ai-optimized.sh で深掘り分析"
+NEXT_STEP_NUMBER=4
+if [ "$VERSION_NEEDS_UPDATE" = false ]; then
+    NEXT_STEP_NUMBER=4
+elif [[ "$RUNNING_VERSION" == *"Legacy/Unknown"* ]]; then
+    NEXT_STEP_NUMBER=5
+else
+    NEXT_STEP_NUMBER=4
+fi
+
+echo "  $NEXT_STEP_NUMBER. 🔄 継続監視: $NEXT_CHECK_INTERVAL 後に再チェック実行"
+echo "  $((NEXT_STEP_NUMBER + 1)). 📊 詳細調査: 必要に応じて .claude/cinnamon-logs-ai-optimized.sh で深掘り分析"
 
 echo
 echo "📋 レポートファイル: $DETAILED_REPORT_FILE"

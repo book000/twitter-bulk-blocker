@@ -1,0 +1,172 @@
+#!/bin/bash
+
+# update-containers - Cinnamonサーバーでのコンテナイメージ更新処理
+# 
+# 処理フロー:
+# 1. docker compose down を実行（この後、他のプロセスが自動的にpull/upを実行）
+# 2. 自動デプロイ完了まで待機・監視
+# 3. 最終的なバージョン確認
+
+set -e
+
+echo "=== TWITTER BULK BLOCKER CONTAINER UPDATE ==="
+echo "Timestamp: $(date '+%Y-%m-%d %H:%M:%S')"
+echo
+
+# 引数チェック
+FORCE_UPDATE=false
+TIMEOUT_MINUTES=30
+SKIP_WAIT=false
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --force)
+            FORCE_UPDATE=true
+            shift
+            ;;
+        --timeout)
+            TIMEOUT_MINUTES="$2"
+            shift 2
+            ;;
+        --skip-wait)
+            SKIP_WAIT=true
+            shift
+            ;;
+        --help)
+            echo "Usage: $0 [OPTIONS]"
+            echo ""
+            echo "Options:"
+            echo "  --force         強制的に更新を実行（確認をスキップ）"
+            echo "  --timeout N     デプロイ完了待機のタイムアウト時間（分、デフォルト: 30）"
+            echo "  --skip-wait     docker compose downのみ実行して終了"
+            echo "  --help          このヘルプを表示"
+            echo ""
+            echo "例:"
+            echo "  $0                    # 通常の更新（確認あり）"
+            echo "  $0 --force            # 強制更新"
+            echo "  $0 --timeout 60       # 60分のタイムアウト"
+            echo "  $0 --skip-wait        # downのみ実行"
+            exit 0
+            ;;
+        *)
+            echo "❌ 不明なオプション: $1"
+            echo "ヘルプを表示: $0 --help"
+            exit 1
+            ;;
+    esac
+done
+
+echo "🔍 PRE-UPDATE VERIFICATION"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# 現在の稼働状況確認
+echo "📊 現在の稼働状況:"
+RUNNING_CONTAINERS=$(ssh Cinnamon "docker ps --filter 'name=bulk-block-users' --format '{{.Names}}' | wc -l")
+echo "  稼働中コンテナ数: $RUNNING_CONTAINERS"
+
+if [ "$RUNNING_CONTAINERS" -eq 0 ]; then
+    echo "⚠️ 稼働中のコンテナがありません"
+    if [ "$FORCE_UPDATE" = false ]; then
+        echo "継続しますか？ [y/N]:"
+        read -r CONFIRM
+        if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
+            echo "❌ 更新をキャンセルしました"
+            exit 1
+        fi
+    fi
+fi
+
+# 現在のバージョン確認
+echo
+echo "🔢 更新前バージョン確認:"
+CURRENT_CONTAINER=$(ssh Cinnamon "docker ps --filter 'name=bulk-block-users' --format '{{.Names}}' | head -1")
+if [ -n "$CURRENT_CONTAINER" ]; then
+    CURRENT_VERSION=$(ssh Cinnamon "docker exec $CURRENT_CONTAINER python3 -m twitter_blocker --version 2>/dev/null" | sed 's/^python3 -m twitter_blocker //')
+    if [ -n "$CURRENT_VERSION" ]; then
+        echo "  現在稼働中: $CURRENT_VERSION"
+    else
+        echo "  現在稼働中: Legacy/Unknown (--versionオプション未対応)"
+    fi
+else
+    echo "  現在稼働中: なし"
+fi
+
+# GitHub最新リリース確認
+echo "🔍 GitHub最新リリース確認:"
+UPDATE_SCRIPT_DIR="$(dirname "$(realpath "$0")")"
+RELEASE_CHECK_OUTPUT=$("$UPDATE_SCRIPT_DIR/check-latest-release" --no-running-check 2>/dev/null || echo "")
+
+if [ -n "$RELEASE_CHECK_OUTPUT" ]; then
+    LATEST_GITHUB_TAG=$(echo "$RELEASE_CHECK_OUTPUT" | grep "Tag:" | cut -d' ' -f4)
+    RELEASE_DATE=$(echo "$RELEASE_CHECK_OUTPUT" | grep "Release Date:" | cut -d' ' -f4-)
+    echo "  GitHub最新リリース: $LATEST_GITHUB_TAG"
+    echo "  リリース日時: $RELEASE_DATE"
+else
+    echo "  ⚠️ GitHub リリース情報取得失敗"
+fi
+
+# 最新イメージのバージョン確認
+LATEST_VERSION=$(ssh Cinnamon "timeout 15 docker run --rm --entrypoint python3 ghcr.io/book000/twitter-bulk-blocker:latest -m twitter_blocker --version 2>/dev/null" | sed 's/^python3 -m twitter_blocker //')
+if [ -n "$LATEST_VERSION" ]; then
+    echo "  最新イメージ: $LATEST_VERSION"
+else
+    echo "  最新イメージ: 取得失敗"
+fi
+
+# リリースとイメージの整合性確認
+if [ -n "$LATEST_GITHUB_TAG" ] && [ -n "$LATEST_VERSION" ]; then
+    GITHUB_VERSION_CLEAN=$(echo "$LATEST_GITHUB_TAG" | sed 's/^v//')
+    if [ "$GITHUB_VERSION_CLEAN" = "$LATEST_VERSION" ]; then
+        echo "  ✅ リリース・イメージ整合性: 一致"
+    else
+        echo "  ⚠️ リリース・イメージ不整合: GitHub($LATEST_GITHUB_TAG) vs Image($LATEST_VERSION)"
+        echo "     ※ イメージビルドの遅延またはキャッシュ問題の可能性"
+    fi
+fi
+
+echo
+echo "🚀 CONTAINER UPDATE EXECUTION"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# 最終確認（--forceでない場合）
+if [ "$FORCE_UPDATE" = false ]; then
+    echo "⚠️ 以下の処理を実行します:"
+    echo "  1. docker compose down の実行"
+    echo "  2. 自動デプロイプロセスの待機（最大 ${TIMEOUT_MINUTES}分）"
+    echo "  3. 新しいコンテナの起動確認"
+    echo ""
+    echo "処理を続行しますか？ [y/N]:"
+    read -r CONFIRM
+    if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
+        echo "❌ 更新をキャンセルしました"
+        exit 1
+    fi
+fi
+
+echo "🔄 docker compose down を実行中..."
+UPDATE_START_TIME=$(date +%s)
+
+# docker compose downを実行
+ssh Cinnamon "cd /opt/docker && docker compose down" || {
+    echo "❌ docker compose down が失敗しました"
+    exit 1
+}
+
+echo "✅ docker compose down 完了"
+echo "⏳ 自動デプロイプロセス（pull & up）の開始を待機中..."
+
+# --skip-waitが指定されている場合はここで終了
+if [ "$SKIP_WAIT" = true ]; then
+    echo "🏁 --skip-wait指定のため、docker compose downのみで終了"
+    echo "💡 デプロイ完了確認は以下で実行："
+    echo "   .claude/commands/wait-for-deployment --timeout ${TIMEOUT_MINUTES}"
+    exit 0
+fi
+
+# 待機スクリプトを実行
+echo "🕐 デプロイ完了待機スクリプトを開始..."
+UPDATE_SCRIPT_DIR="$(dirname "$(realpath "$0")")"
+"$UPDATE_SCRIPT_DIR/wait-for-deployment" --timeout "$TIMEOUT_MINUTES" --update-start-time "$UPDATE_START_TIME"
+
+echo
+echo "🎉 コンテナ更新処理が完了しました！"
