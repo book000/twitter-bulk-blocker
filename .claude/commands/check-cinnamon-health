@@ -1,0 +1,146 @@
+#!/bin/bash
+
+# check-cinnamon-health - 長期ヘルス分析専用モジュール
+
+set -e
+
+echo "🔐 AUTHENTICATION STATUS & LONG-TERM HEALTH ANALYSIS"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# 認証エラー履歴分析
+echo "📊 Authentication Error Timeline:"
+
+AUTH_ERRORS_5M=0
+AUTH_ERRORS_1H=0
+AUTH_ERRORS_6H=0
+AUTH_ERRORS_24H=0
+
+CONTAINERS="bulk-block-users-book000-1 bulk-block-users-ihc_amot-1 bulk-block-users-book000_vrc-1 bulk-block-users-authorizedkey-1 bulk-block-users-tomachi_priv-1 bulk-block-users-tomarabbit-1"
+
+for container in $CONTAINERS; do
+    # 各時間範囲での認証エラーをカウント
+    AUTH_ERRORS_5M=$((AUTH_ERRORS_5M + $(ssh Cinnamon "docker logs $container --since='5m' 2>&1 | grep -iE '(authorization|authentication|401|unauthorized)' | wc -l" || echo "0")))
+    AUTH_ERRORS_1H=$((AUTH_ERRORS_1H + $(ssh Cinnamon "docker logs $container --since='1h' 2>&1 | grep -iE '(authorization|authentication|401|unauthorized)' | wc -l" || echo "0")))
+    AUTH_ERRORS_6H=$((AUTH_ERRORS_6H + $(ssh Cinnamon "docker logs $container --since='6h' 2>&1 | grep -iE '(authorization|authentication|401|unauthorized)' | wc -l" || echo "0")))
+    AUTH_ERRORS_24H=$((AUTH_ERRORS_24H + $(ssh Cinnamon "docker logs $container --since='24h' 2>&1 | grep -iE '(authorization|authentication|401|unauthorized)' | wc -l" || echo "0")))
+done
+
+echo "  • 最近5分間: $AUTH_ERRORS_5M 件"
+echo "  • 最近1時間: $AUTH_ERRORS_1H 件"
+echo "  • 最近6時間: $AUTH_ERRORS_6H 件"
+echo "  • 最近24時間: $AUTH_ERRORS_24H 件"
+
+if [ $AUTH_ERRORS_24H -eq 0 ]; then
+    echo "✅ No authentication errors in last 24 hours"
+else
+    echo "⚠️ Authentication errors detected in last 24 hours"
+fi
+
+echo ""
+
+# Cookie更新状況分析
+echo "🍪 Cookie Update Health Analysis:"
+
+COOKIE_UPDATES=0
+COOKIE_FAILURES=0
+
+for container in $CONTAINERS; do
+    service=$(echo $container | cut -d- -f4)
+    
+    # Cookie更新成功・失敗をカウント
+    updates=$(ssh Cinnamon "docker logs $container --since='1h' 2>&1 | grep -c 'Cookie更新完了' || echo '0'")
+    failures=$(ssh Cinnamon "docker logs $container --since='1h' 2>&1 | grep -c 'Cookie.*失敗\|Cookie.*エラー' || echo '0'")
+    
+    COOKIE_UPDATES=$((COOKIE_UPDATES + updates))
+    COOKIE_FAILURES=$((COOKIE_FAILURES + failures))
+    
+    if [ $updates -gt 0 ] || [ $failures -gt 0 ]; then
+        echo "  📊 $service: 更新${updates}回, 失敗${failures}回"
+    fi
+done
+
+echo "  📈 総計: 更新${COOKIE_UPDATES}回, 失敗${COOKIE_FAILURES}回 (過去1時間)"
+
+if [ $COOKIE_FAILURES -eq 0 ]; then
+    echo "  ✅ Cookie更新システム正常"
+elif [ $COOKIE_FAILURES -gt $COOKIE_UPDATES ]; then
+    echo "  🚨 Cookie更新システム異常: 失敗が成功を上回る"
+else
+    echo "  ⚠️ Cookie更新で一部失敗: 監視継続必要"
+fi
+
+echo ""
+
+# 長期エラー傾向分析
+echo "📈 Long-term Error Trend Analysis:"
+
+ERRORS_1H=0
+ERRORS_6H=0
+ERRORS_24H=0
+
+for container in $CONTAINERS; do
+    ERRORS_1H=$((ERRORS_1H + $(ssh Cinnamon "docker logs $container --since='1h' 2>&1 | grep -c '403' || echo '0'")))
+    ERRORS_6H=$((ERRORS_6H + $(ssh Cinnamon "docker logs $container --since='6h' 2>&1 | grep -c '403' || echo '0'")))
+    ERRORS_24H=$((ERRORS_24H + $(ssh Cinnamon "docker logs $container --since='24h' 2>&1 | grep -c '403' || echo '0'")))
+done
+
+echo "  📊 403エラー推移:"
+echo "    - 1時間: $ERRORS_1H件"
+echo "    - 6時間: $ERRORS_6H件"
+echo "    - 24時間: $ERRORS_24H件"
+
+# エラー率計算
+if [ $ERRORS_6H -gt 0 ]; then
+    HOURLY_RATE=$((ERRORS_1H * 6))
+    if [ $HOURLY_RATE -gt $ERRORS_6H ]; then
+        echo "  📈 エラー増加傾向"
+    elif [ $HOURLY_RATE -lt $((ERRORS_6H / 2)) ]; then
+        echo "  📉 エラー減少傾向"
+    else
+        echo "  ➡️ エラー横ばい"
+    fi
+fi
+
+# ヘルススコア算出
+HEALTH_SCORE=100
+
+# 認証エラーによる減点
+if [ $AUTH_ERRORS_24H -gt 0 ]; then
+    HEALTH_SCORE=$((HEALTH_SCORE - AUTH_ERRORS_24H * 5))
+fi
+
+# 403エラーによる減点
+if [ $ERRORS_24H -gt 100 ]; then
+    HEALTH_SCORE=$((HEALTH_SCORE - 30))
+elif [ $ERRORS_24H -gt 50 ]; then
+    HEALTH_SCORE=$((HEALTH_SCORE - 20))
+elif [ $ERRORS_24H -gt 20 ]; then
+    HEALTH_SCORE=$((HEALTH_SCORE - 10))
+fi
+
+# Cookie失敗による減点
+if [ $COOKIE_FAILURES -gt $COOKIE_UPDATES ]; then
+    HEALTH_SCORE=$((HEALTH_SCORE - 25))
+elif [ $COOKIE_FAILURES -gt 0 ]; then
+    HEALTH_SCORE=$((HEALTH_SCORE - 10))
+fi
+
+# 最小値0に調整
+if [ $HEALTH_SCORE -lt 0 ]; then
+    HEALTH_SCORE=0
+fi
+
+echo ""
+echo "🎖️ 24時間ヘルススコア: $HEALTH_SCORE/100"
+
+if [ $HEALTH_SCORE -ge 90 ]; then
+    echo "  ✅ EXCELLENT: システム非常に安定"
+elif [ $HEALTH_SCORE -ge 80 ]; then
+    echo "  ✅ GOOD: システム安定"
+elif [ $HEALTH_SCORE -ge 70 ]; then
+    echo "  ⚠️ FAIR: 軽微な問題あり"
+elif [ $HEALTH_SCORE -ge 50 ]; then
+    echo "  ⚠️ POOR: 複数の問題あり"
+else
+    echo "  🚨 CRITICAL: 深刻な問題あり"
+fi

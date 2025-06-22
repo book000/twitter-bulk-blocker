@@ -1,0 +1,145 @@
+#!/bin/bash
+
+# check-cinnamon-containers - コンテナ状態分析専用モジュール
+
+set -e
+
+BRIEF=false
+
+# オプション解析
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --brief|-b)
+            BRIEF=true
+            shift
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
+if [ "$BRIEF" = false ]; then
+    echo "📊 CONTAINER STATUS DETAILED ANALYSIS"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+fi
+
+# コンテナ状態分析
+if [ "$BRIEF" = true ]; then
+    echo "🔍 コンテナ状態:"
+else
+    echo "🔍 Container Status (稼働中/停止中の詳細分析):"
+fi
+
+# 稼働中のコンテナ
+RUNNING_CONTAINERS=$(ssh Cinnamon "docker ps --filter 'name=bulk-block-users' --format '{{.Names}} {{.Status}} {{.State}}'")
+STOPPED_CONTAINERS=$(ssh Cinnamon "docker ps -a --filter 'name=bulk-block-users' --filter 'status=exited' --format '{{.Names}} {{.Status}}'")
+
+if [ -n "$RUNNING_CONTAINERS" ]; then
+    if [ "$BRIEF" = true ]; then
+        echo "✅ 稼働中コンテナ:"
+        echo "$RUNNING_CONTAINERS" | while read name status state; do
+            echo "  - $name ($status)"
+        done
+    else
+        echo "NAMES                              STATUS                 STATE"
+        echo "$RUNNING_CONTAINERS" | while read name status state; do
+            printf "%-34s %-22s %s\n" "$name" "$status" "$state"
+        done
+        
+        echo ""
+        echo "✅ Running Containers:"
+        echo "$RUNNING_CONTAINERS" | while read name status state; do
+            echo "  - $name"
+        done
+    fi
+else
+    echo "❌ 稼働中のコンテナが見つかりません"
+fi
+
+# 停止中のコンテナ
+if [ -n "$STOPPED_CONTAINERS" ]; then
+    if [ "$BRIEF" = true ]; then
+        echo "🔴 停止中コンテナ:"
+        echo "$STOPPED_CONTAINERS" | while read name status; do
+            echo "  - $name ($status)"
+        done
+    else
+        echo "🔴 Stopped Containers:"
+        echo "$STOPPED_CONTAINERS" | while read name status; do
+            echo "  - $name ($status)"
+        done
+    fi
+else
+    if [ "$BRIEF" = false ]; then
+        echo "🔴 Stopped Containers:"
+        echo "  - None"
+    fi
+fi
+
+# 稼働時間マイルストーン分析（詳細モードまたは3時間以上稼働時）
+if [ -n "$RUNNING_CONTAINERS" ]; then
+    # 最初のコンテナの稼働時間を取得
+    FIRST_CONTAINER=$(echo "$RUNNING_CONTAINERS" | head -1 | awk '{print $1}')
+    UPTIME_STATUS=$(echo "$RUNNING_CONTAINERS" | head -1 | awk '{print $2}')
+    
+    # 稼働時間からマイルストーン判定
+    if [[ "$UPTIME_STATUS" =~ "hour" ]]; then
+        HOURS=$(echo "$UPTIME_STATUS" | grep -o '[0-9]\+' | head -1)
+        
+        if [ "$BRIEF" = false ] || [ "$HOURS" -ge 3 ]; then
+            echo ""
+            if [ "$BRIEF" = true ]; then
+                echo "🏆 稼働マイルストーン:"
+            else
+                echo "🏆 UPTIME MILESTONES ANALYSIS:"
+            fi
+            
+            if [ "$HOURS" -ge 6 ]; then
+                MILESTONE="🎖️ 6時間+ ULTRA-STABLE"
+                QUALITY="ULTRA-STABLE"
+            elif [ "$HOURS" -ge 3 ]; then
+                MILESTONE="🏆 3時間+ LONG-TERM"
+                QUALITY="LONG-TERM"
+            elif [ "$HOURS" -ge 2 ]; then
+                MILESTONE="🏆 2時間+ ENTERPRISE"
+                QUALITY="ENTERPRISE"
+            elif [ "$HOURS" -ge 1 ]; then
+                MILESTONE="✅ 1時間+ STABLE"
+                QUALITY="STABLE"
+            else
+                MILESTONE="📊 1時間未満"
+                QUALITY="TESTING"
+            fi
+            
+            if [ "$BRIEF" = true ]; then
+                echo "  $MILESTONE"
+            else
+                echo "⏱️ 現在の稼働時間: $UPTIME_STATUS"
+                echo "🏆 マイルストーン: $MILESTONE"
+                echo "📊 品質レベル: $QUALITY"
+            fi
+        fi
+    fi
+fi
+
+# ヘルスチェック状況（詳細モードのみ）
+if [ "$BRIEF" = false ] && [ -n "$RUNNING_CONTAINERS" ]; then
+    echo ""
+    echo "🏥 Health Check Status:"
+    
+    HEALTHY_COUNT=0
+    UNHEALTHY_COUNT=0
+    
+    echo "$RUNNING_CONTAINERS" | while read name status state; do
+        if [[ "$status" =~ "healthy" ]]; then
+            echo "  ✅ $name: healthy"
+            HEALTHY_COUNT=$((HEALTHY_COUNT + 1))
+        elif [[ "$status" =~ "unhealthy" ]]; then
+            echo "  ❌ $name: unhealthy"
+            UNHEALTHY_COUNT=$((UNHEALTHY_COUNT + 1))
+        else
+            echo "  ❓ $name: health check not configured"
+        fi
+    done
+fi
