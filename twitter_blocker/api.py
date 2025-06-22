@@ -1234,6 +1234,12 @@ class TwitterAPI:
                 self._403_error_stats["classified_errors"][error_type] = 0
             self._403_error_stats["classified_errors"][error_type] += 1
             
+            # 403エラー専用処理：Cookie強制更新（全サービス超積極的）
+            if self.cookie_manager.force_refresh_on_error_threshold(
+                self._403_error_stats["total_403_errors"], threshold=1):
+                print(f"🔄 403エラー蓄積による強制リトライ対象: {action_name}")
+                # Note: リトライは呼び出し元で実装
+            
             # HTTPエラー分析システムへの記録
             if self.error_analytics:
                 runtime_hours = (time.time() - self._session_start_time) / 3600
