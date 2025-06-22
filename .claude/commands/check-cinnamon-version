@@ -83,9 +83,13 @@ if [ -n "$LATEST_RELEASE" ] && [ "$LATEST_RELEASE" != "null" ]; then
         echo "  Latest: $LATEST_RELEASE"
     fi
     
-    # バージョン比較
+    # バージョン比較（プレフィックス正規化）
     if [ -n "$RUNNING_VERSION" ] && [ "$RUNNING_VERSION" != "Legacy/Unknown" ]; then
-        if [ "$RUNNING_VERSION" = "$LATEST_RELEASE" ]; then
+        # プレフィックス "v" を除去して比較
+        NORMALIZED_RUNNING=$(echo "$RUNNING_VERSION" | sed 's/^v//')
+        NORMALIZED_LATEST=$(echo "$LATEST_RELEASE" | sed 's/^v//')
+        
+        if [ "$NORMALIZED_RUNNING" = "$NORMALIZED_LATEST" ]; then
             echo "  ✅ Release-Image整合性: 一致"
         else
             echo "  ⚠️ バージョン不一致: 稼働中($RUNNING_VERSION) vs 最新($LATEST_RELEASE)"

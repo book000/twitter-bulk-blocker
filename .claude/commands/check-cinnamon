@@ -38,16 +38,20 @@ while [[ $# -gt 0 ]]; do
             echo "  -h, --help         このヘルプを表示"
             echo ""
             echo "利用可能なモジュール:"
-            echo "  version    バージョン情報"
-            echo "  container  コンテナ状態"
-            echo "  errors     403エラー分析"
-            echo "  completion 完了率分析"
-            echo "  health     長期ヘルス分析"
+            echo "  version      バージョン情報"
+            echo "  container    コンテナ状態"
+            echo "  errors       403エラー分析"
+            echo "  completion   完了率分析"
+            echo "  health       長期ヘルス分析"
+            echo "  performance  パフォーマンス指標・履歴比較"
+            echo "  accounts     アカウント別詳細分析・最適化提案"
             echo ""
             echo "例:"
             echo "  check-cinnamon                    # 基本チェック"
             echo "  check-cinnamon --errors-only      # エラーのみ"
             echo "  check-cinnamon --module errors    # エラー分析のみ"
+            echo "  check-cinnamon --module performance # パフォーマンス分析"
+            echo "  check-cinnamon --module accounts   # アカウント別分析"
             echo "  check-cinnamon --detailed          # 全詳細分析"
             exit 0
             ;;
@@ -83,6 +87,12 @@ if [ -n "$MODULES" ]; then
             health)
                 .claude/commands/check-cinnamon-health
                 ;;
+            performance)
+                .claude/commands/check-cinnamon-performance
+                ;;
+            accounts)
+                .claude/commands/check-cinnamon-account-analysis
+                ;;
             *)
                 echo "❌ 不明なモジュール: $module"
                 ;;
@@ -113,11 +123,21 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 
 echo ""
 
-# 完了率分析（詳細モードのみ）
+# 詳細分析（詳細モードのみ）
 if [ "$DETAILED" = true ]; then
     echo "📈 COMPLETION RATE ANALYSIS"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     .claude/commands/check-cinnamon-completion
+    echo ""
+    
+    echo "📊 PERFORMANCE METRICS & TREND ANALYSIS"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    .claude/commands/check-cinnamon-performance --compare
+    echo ""
+    
+    echo "👥 ACCOUNT-SPECIFIC OPTIMIZATION ANALYSIS"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    .claude/commands/check-cinnamon-account-analysis
     echo ""
 fi
 
@@ -148,5 +168,7 @@ echo ""
 echo "📊 詳細分析: check-cinnamon --detailed"
 echo "🚨 エラー特化: check-cinnamon --errors-only"
 echo "🔧 個別分析: check-cinnamon --module errors"
+echo "📈 パフォーマンス: check-cinnamon --module performance --compare"
+echo "👥 アカウント分析: check-cinnamon --module accounts"
 echo ""
 echo "🕒 軽量版実行時間: $(date '+%H:%M:%S')"

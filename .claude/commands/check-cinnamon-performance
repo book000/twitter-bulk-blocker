@@ -1,0 +1,257 @@
+#!/bin/bash
+
+# check-cinnamon-performance - パフォーマンス指標分析・履歴比較モジュール
+
+set -e
+
+BRIEF=false
+COMPARE=false
+
+# オプション解析
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --brief|-b)
+            BRIEF=true
+            shift
+            ;;
+        --compare|-c)
+            COMPARE=true
+            shift
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
+# パフォーマンス履歴ファイル
+PERF_HISTORY="/tmp/cinnamon-performance-history.json"
+CURRENT_TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
+
+if [ "$BRIEF" = false ]; then
+    echo "📊 PERFORMANCE METRICS ANALYSIS"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+fi
+
+# 現在のパフォーマンス指標を収集
+collect_current_metrics() {
+    # アカウント別処理数・エラー数・成功率を収集
+    declare -A accounts=()
+    declare -A total_processed=()
+    declare -A total_errors=()
+    declare -A success_rates=()
+    
+    # アカウントリスト
+    account_list=("book000" "ihc_amot" "book000_vrc" "authorizedkey" "tomachi_priv" "tomarabbit")
+    
+    total_processed_all=0
+    total_errors_all=0
+    
+    for account in "${account_list[@]}"; do
+        container="bulk-block-users-${account}-1"
+        
+        # 最近24時間のログから処理数とエラー数を取得
+        processed=$(ssh Cinnamon "docker logs $container --since='24h' 2>&1 | grep -E '(blocked|success|completed)' | wc -l" 2>/dev/null || echo "0")
+        errors=$(ssh Cinnamon "docker logs $container --since='24h' 2>&1 | grep -E '(403|error|failed)' | wc -l" 2>/dev/null || echo "0")
+        
+        total_processed[$account]=$processed
+        total_errors[$account]=$errors
+        
+        # 成功率計算
+        if [ "$processed" -gt 0 ]; then
+            success_rate=$(( (processed - errors) * 100 / processed ))
+        else
+            success_rate=0
+        fi
+        success_rates[$account]=$success_rate
+        
+        total_processed_all=$((total_processed_all + processed))
+        total_errors_all=$((total_errors_all + errors))
+    done
+    
+    # 全体成功率
+    if [ "$total_processed_all" -gt 0 ]; then
+        overall_success_rate=$(( (total_processed_all - total_errors_all) * 100 / total_processed_all ))
+    else
+        overall_success_rate=0
+    fi
+    
+    # 処理速度推定（24時間での処理数から算出）
+    processing_speed=$(( total_processed_all / 24 ))
+    
+    # JSONフォーマットで現在の指標を作成
+    current_metrics=$(cat <<EOF
+{
+  "timestamp": "$CURRENT_TIMESTAMP",
+  "total_processed": $total_processed_all,
+  "total_errors": $total_errors_all,
+  "overall_success_rate": $overall_success_rate,
+  "processing_speed_per_hour": $processing_speed,
+  "accounts": {
+    "book000": {"processed": ${total_processed[book000]}, "errors": ${total_errors[book000]}, "success_rate": ${success_rates[book000]}},
+    "ihc_amot": {"processed": ${total_processed[ihc_amot]}, "errors": ${total_errors[ihc_amot]}, "success_rate": ${success_rates[ihc_amot]}},
+    "book000_vrc": {"processed": ${total_processed[book000_vrc]}, "errors": ${total_errors[book000_vrc]}, "success_rate": ${success_rates[book000_vrc]}},
+    "authorizedkey": {"processed": ${total_processed[authorizedkey]}, "errors": ${total_errors[authorizedkey]}, "success_rate": ${success_rates[authorizedkey]}},
+    "tomachi_priv": {"processed": ${total_processed[tomachi_priv]}, "errors": ${total_errors[tomachi_priv]}, "success_rate": ${success_rates[tomachi_priv]}},
+    "tomarabbit": {"processed": ${total_processed[tomarabbit]}, "errors": ${total_errors[tomarabbit]}, "success_rate": ${success_rates[tomarabbit]}}
+  }
+}
+EOF
+)
+    
+    echo "$current_metrics"
+}
+
+# パフォーマンス指標を表示
+display_current_metrics() {
+    local metrics="$1"
+    
+    total_processed=$(echo "$metrics" | jq -r '.total_processed')
+    total_errors=$(echo "$metrics" | jq -r '.total_errors')
+    success_rate=$(echo "$metrics" | jq -r '.overall_success_rate')
+    speed=$(echo "$metrics" | jq -r '.processing_speed_per_hour')
+    
+    if [ "$BRIEF" = true ]; then
+        echo "📊 現在のパフォーマンス:"
+        echo "  処理数/24h: ${total_processed}件"
+        echo "  エラー数/24h: ${total_errors}件"
+        echo "  成功率: ${success_rate}%"
+        echo "  処理速度: ${speed}件/時"
+    else
+        echo "📊 現在のパフォーマンス指標 (24時間):"
+        echo "  総処理数: ${total_processed}件"
+        echo "  総エラー数: ${total_errors}件"
+        echo "  全体成功率: ${success_rate}%"
+        echo "  平均処理速度: ${speed}件/時"
+        echo ""
+        echo "📋 アカウント別詳細:"
+        
+        for account in book000 ihc_amot book000_vrc authorizedkey tomachi_priv tomarabbit; do
+            proc=$(echo "$metrics" | jq -r ".accounts.$account.processed")
+            err=$(echo "$metrics" | jq -r ".accounts.$account.errors")
+            rate=$(echo "$metrics" | jq -r ".accounts.$account.success_rate")
+            printf "  %-15s: %3d件処理, %2d件エラー, 成功率%3d%%\n" "$account" "$proc" "$err" "$rate"
+        done
+    fi
+}
+
+# 履歴比較分析
+compare_with_history() {
+    local current_metrics="$1"
+    
+    if [ ! -f "$PERF_HISTORY" ]; then
+        echo "📋 履歴データなし（初回実行）"
+        return
+    fi
+    
+    # 最新の履歴データを取得
+    last_metrics=$(tail -1 "$PERF_HISTORY" 2>/dev/null || echo "{}")
+    
+    if [ "$last_metrics" = "{}" ]; then
+        echo "📋 履歴データ形式エラー"
+        return
+    fi
+    
+    echo ""
+    if [ "$BRIEF" = false ]; then
+        echo "📈 前回実行との比較分析:"
+    else
+        echo "📈 前回比較:"
+    fi
+    
+    # 前回データ取得
+    last_timestamp=$(echo "$last_metrics" | jq -r '.timestamp // "Unknown"')
+    last_processed=$(echo "$last_metrics" | jq -r '.total_processed // 0')
+    last_errors=$(echo "$last_metrics" | jq -r '.total_errors // 0')
+    last_success_rate=$(echo "$last_metrics" | jq -r '.overall_success_rate // 0')
+    last_speed=$(echo "$last_metrics" | jq -r '.processing_speed_per_hour // 0')
+    
+    # 現在データ取得
+    curr_processed=$(echo "$current_metrics" | jq -r '.total_processed')
+    curr_errors=$(echo "$current_metrics" | jq -r '.total_errors')
+    curr_success_rate=$(echo "$current_metrics" | jq -r '.overall_success_rate')
+    curr_speed=$(echo "$current_metrics" | jq -r '.processing_speed_per_hour')
+    
+    # 変化率計算
+    if [ "$last_processed" -gt 0 ]; then
+        processed_change=$(( (curr_processed - last_processed) * 100 / last_processed ))
+    else
+        processed_change=0
+    fi
+    
+    if [ "$last_errors" -gt 0 ]; then
+        error_change=$(( (curr_errors - last_errors) * 100 / last_errors ))
+    else
+        error_change=0
+    fi
+    
+    success_rate_change=$(( curr_success_rate - last_success_rate ))
+    
+    if [ "$last_speed" -gt 0 ]; then
+        speed_change=$(( (curr_speed - last_speed) * 100 / last_speed ))
+    else
+        speed_change=0
+    fi
+    
+    if [ "$BRIEF" = true ]; then
+        printf "  前回: %s\n" "$last_timestamp"
+        printf "  処理数変化: %+d%% (%d → %d)\n" "$processed_change" "$last_processed" "$curr_processed"
+        printf "  エラー変化: %+d%% (%d → %d)\n" "$error_change" "$last_errors" "$curr_errors"
+        printf "  成功率変化: %+d%% (%d%% → %d%%)\n" "$success_rate_change" "$last_success_rate" "$curr_success_rate"
+    else
+        echo "  前回測定時刻: $last_timestamp"
+        echo "  処理数変化: ${processed_change:+}${processed_change}% (${last_processed} → ${curr_processed})"
+        echo "  エラー数変化: ${error_change:+}${error_change}% (${last_errors} → ${curr_errors})"
+        echo "  成功率変化: ${success_rate_change:+}${success_rate_change}% (${last_success_rate}% → ${curr_success_rate}%)"
+        echo "  処理速度変化: ${speed_change:+}${speed_change}% (${last_speed} → ${curr_speed} 件/時)"
+        
+        # トレンド判定
+        echo ""
+        echo "📊 パフォーマンストレンド判定:"
+        if [ "$success_rate_change" -gt 5 ]; then
+            echo "  ✅ 成功率大幅改善 (+${success_rate_change}%)"
+        elif [ "$success_rate_change" -gt 0 ]; then
+            echo "  📈 成功率改善 (+${success_rate_change}%)"
+        elif [ "$success_rate_change" -lt -5 ]; then
+            echo "  🚨 成功率大幅悪化 (${success_rate_change}%)"
+        elif [ "$success_rate_change" -lt 0 ]; then
+            echo "  📉 成功率低下 (${success_rate_change}%)"
+        else
+            echo "  ➡️ 成功率安定 (変化なし)"
+        fi
+        
+        if [ "$speed_change" -gt 20 ]; then
+            echo "  🚀 処理速度大幅向上 (+${speed_change}%)"
+        elif [ "$speed_change" -gt 0 ]; then
+            echo "  📈 処理速度向上 (+${speed_change}%)"
+        elif [ "$speed_change" -lt -20 ]; then
+            echo "  🐌 処理速度大幅低下 (${speed_change}%)"
+        elif [ "$speed_change" -lt 0 ]; then
+            echo "  📉 処理速度低下 (${speed_change}%)"
+        else
+            echo "  ➡️ 処理速度安定 (変化なし)"
+        fi
+    fi
+}
+
+# メイン処理
+current_metrics=$(collect_current_metrics)
+display_current_metrics "$current_metrics"
+
+if [ "$COMPARE" = true ]; then
+    compare_with_history "$current_metrics"
+fi
+
+# 履歴にデータを追加（最大100件保持）
+echo "$current_metrics" >> "$PERF_HISTORY"
+
+# 履歴ファイルサイズ制限（最新100件のみ保持）
+if [ -f "$PERF_HISTORY" ]; then
+    tail -100 "$PERF_HISTORY" > "${PERF_HISTORY}.tmp" && mv "${PERF_HISTORY}.tmp" "$PERF_HISTORY"
+fi
+
+if [ "$BRIEF" = false ]; then
+    echo ""
+    echo "📝 履歴保存完了: $PERF_HISTORY"
+    echo "🔄 比較分析実行: check-cinnamon-performance --compare"
+fi
