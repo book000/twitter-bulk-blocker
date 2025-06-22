@@ -417,6 +417,123 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 
 # 前回実行の履歴ファイルを確認
 HISTORY_FILE="/tmp/cinnamon-history-trend.json"
+MILESTONES_FILE="/tmp/cinnamon-uptime-milestones.json"
+
+# 🆕 稼働時間マイルストーン分析機能
+echo "🏆 UPTIME MILESTONES ANALYSIS (稼働時間マイルストーン分析)"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# Cinnamonサーバーからコンテナの稼働時間情報を取得
+CONTAINER_UPTIME_INFO=$(ssh Cinnamon "docker ps --format 'table {{.Names}}\t{{.Status}}' | grep -E 'Up [0-9]'" | head -1)
+
+if [ -n "$CONTAINER_UPTIME_INFO" ]; then
+    # 稼働時間テキストから時間を抽出・解析
+    UPTIME_TEXT=$(echo "$CONTAINER_UPTIME_INFO" | awk '{print $2, $3}')
+    
+    # 稼働時間の秒数への変換
+    UPTIME_SECONDS=0
+    if echo "$UPTIME_TEXT" | grep -q "second"; then
+        UPTIME_SECONDS=$(echo "$UPTIME_TEXT" | grep -o '[0-9]\+' | head -1)
+    elif echo "$UPTIME_TEXT" | grep -q "minute"; then
+        UPTIME_MINUTES=$(echo "$UPTIME_TEXT" | grep -o '[0-9]\+' | head -1)
+        UPTIME_SECONDS=$((UPTIME_MINUTES * 60))
+    elif echo "$UPTIME_TEXT" | grep -q "hour"; then
+        UPTIME_HOURS=$(echo "$UPTIME_TEXT" | grep -o '[0-9]\+' | head -1)
+        UPTIME_SECONDS=$((UPTIME_HOURS * 3600))
+    elif echo "$UPTIME_TEXT" | grep -q "day"; then
+        UPTIME_DAYS=$(echo "$UPTIME_TEXT" | grep -o '[0-9]\+' | head -1)
+        UPTIME_SECONDS=$((UPTIME_DAYS * 86400))
+    fi
+    
+    # マイルストーン判定と記録
+    MILESTONE_ACHIEVED=""
+    QUALITY_LEVEL=""
+    RECOMMENDED_INTERVAL=""
+    
+    if [ "$UPTIME_SECONDS" -ge 14400 ]; then     # 4時間以上
+        MILESTONE_ACHIEVED="🏆 4時間+ ULTRA-STABLE+"
+        QUALITY_LEVEL="ULTRA-STABLE+"
+        RECOMMENDED_INTERVAL="4-8時間"
+    elif [ "$UPTIME_SECONDS" -ge 10800 ]; then   # 3時間以上
+        MILESTONE_ACHIEVED="🏆 3時間+ ULTRA-STABLE"
+        QUALITY_LEVEL="ULTRA-STABLE"
+        RECOMMENDED_INTERVAL="3-6時間"
+    elif [ "$UPTIME_SECONDS" -ge 9000 ]; then    # 2時間30分以上
+        MILESTONE_ACHIEVED="🏆 2時間30分+ ULTRA-STABLE"
+        QUALITY_LEVEL="ULTRA-STABLE"
+        RECOMMENDED_INTERVAL="3-6時間"
+    elif [ "$UPTIME_SECONDS" -ge 7200 ]; then    # 2時間以上
+        MILESTONE_ACHIEVED="🏆 2時間+ ENTERPRISE"
+        QUALITY_LEVEL="ENTERPRISE"
+        RECOMMENDED_INTERVAL="2-4時間"
+    elif [ "$UPTIME_SECONDS" -ge 3600 ]; then    # 1時間以上
+        MILESTONE_ACHIEVED="🎯 1時間+ EXCELLENT"
+        QUALITY_LEVEL="EXCELLENT"
+        RECOMMENDED_INTERVAL="60-120分"
+    elif [ "$UPTIME_SECONDS" -ge 2520 ]; then    # 42分以上
+        MILESTONE_ACHIEVED="✅ 42分+ OUTSTANDING"
+        QUALITY_LEVEL="OUTSTANDING"
+        RECOMMENDED_INTERVAL="45-60分"
+    elif [ "$UPTIME_SECONDS" -ge 720 ]; then     # 12分以上
+        MILESTONE_ACHIEVED="✅ 12分+ STABLE"
+        QUALITY_LEVEL="STABLE"
+        RECOMMENDED_INTERVAL="30分"
+    elif [ "$UPTIME_SECONDS" -ge 120 ]; then     # 2分以上
+        MILESTONE_ACHIEVED="✅ 2分+ GOOD"
+        QUALITY_LEVEL="GOOD"
+        RECOMMENDED_INTERVAL="15分"
+    else
+        MILESTONE_ACHIEVED="⏳ 短期稼働"
+        QUALITY_LEVEL="INITIAL"
+        RECOMMENDED_INTERVAL="5分"
+    fi
+    
+    echo "⏱️ 現在の稼働時間: $UPTIME_TEXT ($UPTIME_SECONDS秒)"
+    echo "🏆 マイルストーン: $MILESTONE_ACHIEVED"
+    echo "📊 品質レベル: $QUALITY_LEVEL"
+    echo "⏰ 推奨監視間隔: $RECOMMENDED_INTERVAL"
+    
+    # マイルストーン履歴の記録・更新
+    if [ -f "$MILESTONES_FILE" ]; then
+        PREV_BEST_UPTIME=$(jq -r '.best_uptime_seconds // 0' "$MILESTONES_FILE" 2>/dev/null || echo 0)
+        if [ "$UPTIME_SECONDS" -gt "$PREV_BEST_UPTIME" ]; then
+            echo "🆕 新記録達成！ 前回最高: ${PREV_BEST_UPTIME}秒 → 現在: ${UPTIME_SECONDS}秒"
+            # 新記録をファイルに保存
+            cat > "$MILESTONES_FILE" << EOF
+{
+  "timestamp": "$(date '+%Y-%m-%d %H:%M:%S')",
+  "best_uptime_seconds": $UPTIME_SECONDS,
+  "best_uptime_text": "$UPTIME_TEXT",
+  "quality_level": "$QUALITY_LEVEL",
+  "milestone": "$MILESTONE_ACHIEVED",
+  "recommended_interval": "$RECOMMENDED_INTERVAL"
+}
+EOF
+        else
+            echo "📈 継続安定稼働中（前回最高: ${PREV_BEST_UPTIME}秒）"
+        fi
+    else
+        echo "🆕 初回マイルストーン記録"
+        # 初回記録をファイルに保存
+        cat > "$MILESTONES_FILE" << EOF
+{
+  "timestamp": "$(date '+%Y-%m-%d %H:%M:%S')",
+  "best_uptime_seconds": $UPTIME_SECONDS,
+  "best_uptime_text": "$UPTIME_TEXT",
+  "quality_level": "$QUALITY_LEVEL",
+  "milestone": "$MILESTONE_ACHIEVED",
+  "recommended_interval": "$RECOMMENDED_INTERVAL"
+}
+EOF
+    fi
+else
+    echo "⚠️ 稼働中コンテナが見つかりません - マイルストーン分析不可"
+fi
+
+echo
+echo "📊 HISTORICAL COMPARISON (履歴比較分析)"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
 if [ -f "$HISTORY_FILE" ]; then
     PREV_RUNNING=$(jq -r '.containers.running // 0' "$HISTORY_FILE" 2>/dev/null)
     PREV_STOPPED=$(jq -r '.containers.stopped // 0' "$HISTORY_FILE" 2>/dev/null)
@@ -443,7 +560,7 @@ else
     echo "ℹ️ 初回実行のため履歴比較なし"
 fi
 
-# 現在の状態を履歴として保存
+# 現在の状態を履歴として保存（マイルストーンデータ統合）
 cat > "$HISTORY_FILE" << EOF
 {
   "timestamp": "$(date '+%Y-%m-%d %H:%M:%S')",
@@ -455,6 +572,13 @@ cat > "$HISTORY_FILE" << EOF
     "5min": $AUTH_ERRORS_5M,
     "1hour": $AUTH_ERRORS_1H,
     "24hour": $AUTH_ERRORS_24H
+  },
+  "uptime_analysis": {
+    "uptime_seconds": ${UPTIME_SECONDS:-0},
+    "uptime_text": "${UPTIME_TEXT:-unknown}",
+    "quality_level": "${QUALITY_LEVEL:-unknown}",
+    "milestone": "${MILESTONE_ACHIEVED:-unknown}",
+    "recommended_interval": "${RECOMMENDED_INTERVAL:-15分}"
   }
 }
 EOF
