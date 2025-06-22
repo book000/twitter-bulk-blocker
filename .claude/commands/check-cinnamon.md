@@ -47,11 +47,30 @@ ssh ope@183.90.238.206          # IP直接指定（タイムアウト）
 5. **具体的な修正アクション**の提案
 
 分析結果を受けて、必要に応じて以下の対応を実行：
-- **バージョン不整合が検出された場合**：コンテナイメージの更新推奨
+- **バージョン不整合が検出された場合**：`.claude/commands/auto-update-on-release`でコンテナ更新
 - 認証エラーが検出された場合：Cookie更新の実行
 - コードエラーが特定された場合：該当コードの修正
 - パフォーマンス問題が確認された場合：最適化の実装
 - サービス停止が発生している場合：再起動処理の実行
+
+### 🚀 新リリース対応システム
+**新しいリリース検出・自動更新**：
+- **一回だけ自動更新**: `.claude/commands/auto-update-on-release`
+- **エイリアス**: `.claude/commands/check-and-update-on-new-release`
+- **動作**: 新リリース検出時のみdocker compose downを一回だけ実行
+- **実行形式**: フォアグラウンド実行（バックグラウンド実行なし）
+
+使用例：
+```bash
+# 新リリース検出時のみ更新
+.claude/commands/auto-update-on-release
+
+# テストモード
+.claude/commands/auto-update-on-release --dry-run
+
+# 強制更新
+.claude/commands/auto-update-on-release --force
+```
 
 ### 🔄 継続的改善機能
 **check-cinnamonスクリプト自体の改良**：

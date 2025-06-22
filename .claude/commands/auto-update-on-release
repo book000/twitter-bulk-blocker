@@ -1,0 +1,223 @@
+#!/bin/bash
+
+# auto-update-on-release - 新リリース検出時に一回だけdocker compose downを実行
+#
+# 機能:
+# - GitHub APIで新リリースをチェック
+# - 新しいリリースが検出された場合のみdocker compose downを実行
+# - バックグラウンド実行ではなく、フォアグラウンドで1回だけ実行
+# - 実行後は自動的に終了
+
+set -e
+
+echo "=== AUTO UPDATE ON NEW RELEASE ===" 
+echo "Timestamp: $(date '+%Y-%m-%d %H:%M:%S')"
+echo
+
+# 設定
+GITHUB_REPO="book000/twitter-bulk-blocker"
+GITHUB_API_URL="https://api.github.com/repos/$GITHUB_REPO/releases/latest"
+STATE_FILE="/tmp/twitter-bulk-blocker-release-monitor.state"
+LOG_FILE="/tmp/twitter-bulk-blocker-auto-update.log"
+
+# オプション解析
+DRY_RUN=false
+FORCE_UPDATE=false
+VERBOSE=false
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --dry-run)
+            DRY_RUN=true
+            shift
+            ;;
+        --force)
+            FORCE_UPDATE=true
+            shift
+            ;;
+        --verbose)
+            VERBOSE=true
+            shift
+            ;;
+        --help)
+            echo "Usage: $0 [OPTIONS]"
+            echo ""
+            echo "Options:"
+            echo "  --dry-run       テストモード（実際のdownは実行しない）"
+            echo "  --force         バージョンチェックをスキップして強制実行"
+            echo "  --verbose       詳細ログを表示"
+            echo "  --help          このヘルプを表示"
+            echo ""
+            echo "例:"
+            echo "  $0              # 新リリース検出時のみ更新"
+            echo "  $0 --dry-run    # テストモード"
+            echo "  $0 --force      # 強制更新"
+            echo "  $0 --verbose    # 詳細ログ付き"
+            exit 0
+            ;;
+        *)
+            echo "❌ 不明なオプション: $1"
+            echo "ヘルプを表示: $0 --help"
+            exit 1
+            ;;
+    esac
+done
+
+# ログ関数
+log_message() {
+    local level="$1"
+    local message="$2"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    local log_entry="[$timestamp] [$level] $message"
+    
+    echo "$log_entry"
+    echo "$log_entry" >> "$LOG_FILE"
+    
+    if [ "$VERBOSE" = true ] || [ "$level" = "ERROR" ] || [ "$level" = "ALERT" ]; then
+        echo "$log_entry" >&2
+    fi
+}
+
+# 現在のリリース情報を取得
+get_current_release() {
+    local api_response=$(timeout 30 curl -s "$GITHUB_API_URL" 2>/dev/null || echo "")
+    
+    if [ -z "$api_response" ] || [[ "$api_response" == *"rate limit"* ]] || [[ "$api_response" == *"Not Found"* ]]; then
+        log_message "ERROR" "GitHub API取得失敗"
+        return 1
+    fi
+    
+    local tag_name=$(echo "$api_response" | grep '"tag_name"' | cut -d'"' -f4)
+    local published_at=$(echo "$api_response" | grep '"published_at"' | cut -d'"' -f4)
+    
+    if [ -z "$tag_name" ]; then
+        log_message "ERROR" "リリース情報解析失敗"
+        return 1
+    fi
+    
+    echo "${tag_name}|${published_at}"
+    return 0
+}
+
+# 状態ファイルの読み込み
+load_state() {
+    if [ -f "$STATE_FILE" ]; then
+        cat "$STATE_FILE"
+    else
+        echo ""
+    fi
+}
+
+# 状態ファイルの保存
+save_state() {
+    local state="$1"
+    echo "$state" > "$STATE_FILE"
+    log_message "INFO" "状態保存: $state"
+}
+
+echo "⚙️ CONFIGURATION"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "📊 設定:"
+echo "  Repository: $GITHUB_REPO"
+echo "  テストモード: $([ "$DRY_RUN" = true ] && echo "有効" || echo "無効")"
+echo "  強制更新: $([ "$FORCE_UPDATE" = true ] && echo "有効" || echo "無効")"
+echo "  詳細ログ: $([ "$VERBOSE" = true ] && echo "有効" || echo "無効")"
+echo "  状態ファイル: $STATE_FILE"
+echo "  ログファイル: $LOG_FILE"
+echo ""
+
+log_message "INFO" "自動更新チェック開始"
+
+echo "🔍 RELEASE CHECK"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# 前回の状態を取得
+current_state=$(load_state)
+log_message "INFO" "前回状態: ${current_state:-"なし"}"
+
+# 現在のリリース情報を取得
+echo "📡 GitHub APIから最新リリース情報を取得中..."
+release_info=$(get_current_release)
+if [ $? -ne 0 ]; then
+    log_message "ERROR" "リリース情報取得失敗"
+    exit 1
+fi
+
+current_tag=$(echo "$release_info" | cut -d'|' -f1)
+current_published=$(echo "$release_info" | cut -d'|' -f2)
+
+echo "  最新リリース: $current_tag"
+echo "  公開日時: $current_published"
+log_message "INFO" "現在のリリース: $current_tag"
+
+# 新リリース検出またはフォース実行の判定
+if [ "$FORCE_UPDATE" = true ]; then
+    echo "🚀 強制更新モード: バージョンチェックをスキップ"
+    log_message "INFO" "強制更新モード実行"
+    should_update=true
+elif [ -n "$current_state" ] && [ "$current_state" != "$release_info" ]; then
+    old_tag=$(echo "$current_state" | cut -d'|' -f1)
+    echo "🆕 新リリース検出: $old_tag → $current_tag"
+    log_message "ALERT" "新リリース検出: $old_tag → $current_tag"
+    should_update=true
+elif [ -z "$current_state" ]; then
+    echo "📋 初回実行: 現在のリリースを状態に保存"
+    log_message "INFO" "初回実行: 現在のリリースを状態に保存"
+    save_state "$release_info"
+    should_update=false
+else
+    echo "✅ 新リリースなし: $current_tag"
+    log_message "INFO" "新リリースなし: $current_tag"
+    should_update=false
+fi
+
+echo ""
+
+if [ "$should_update" = true ]; then
+    echo "🚀 CONTAINER UPDATE"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    if [ "$DRY_RUN" = true ]; then
+        echo "🧪 [DRY-RUN] docker compose down の実行をシミュレート"
+        log_message "INFO" "[DRY-RUN] 実際の更新はスキップ"
+    else
+        echo "🔄 docker compose down を実行中..."
+        log_message "INFO" "docker compose down実行開始"
+        
+        # Cinnamonサーバーでdocker compose downを実行
+        if ssh Cinnamon "cd /mnt/hdd/cinnamon/twitter-auto-blocking/bulk-block-users && docker compose down"; then
+            echo "✅ docker compose down 完了"
+            log_message "SUCCESS" "docker compose down成功: $current_tag"
+            
+            echo "⏳ 注意: 自動デプロイプロセス（pull & up）は他のプロセスが実行します"
+            echo "💡 デプロイ完了確認は以下で実行："
+            echo "   .claude/commands/wait-for-deployment --timeout 30"
+        else
+            echo "❌ docker compose down 失敗"
+            log_message "ERROR" "docker compose down失敗"
+            exit 1
+        fi
+    fi
+    
+    # 状態を更新
+    save_state "$release_info"
+    
+    echo ""
+    echo "🎉 更新処理完了"
+    log_message "INFO" "更新処理完了: $current_tag"
+else
+    echo "📋 NO ACTION REQUIRED"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "✅ 新しいリリースはありません - 更新は不要"
+    log_message "INFO" "更新不要: 新リリースなし"
+fi
+
+echo ""
+echo "🔗 RELATED COMMANDS"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "📋 最新リリース確認: .claude/commands/check-latest-release"
+echo "📊 状態確認: .claude/commands/check-cinnamon"
+echo "🕐 デプロイ完了待機: .claude/commands/wait-for-deployment"
+echo "🔄 手動更新: .claude/commands/update-containers"
+
+log_message "INFO" "自動更新チェック完了"
