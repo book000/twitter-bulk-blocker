@@ -1,0 +1,69 @@
+#!/bin/bash
+
+# check-cinnamon-processing-status - 処理状態の詳細分析モジュール
+
+set -e
+
+echo "🔄 PROCESSING STATUS DETAILED ANALYSIS"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# 各アカウントの最新ログエントリを分析
+accounts=("book000" "ihc_amot" "book000_vrc" "authorizedkey" "tomachi_priv" "tomarabbit")
+
+for account in "${accounts[@]}"; do
+    container="bulk-block-users-${account}-1"
+    echo ""
+    echo "📋 $account の最新状態:"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    # 最新のエラーメッセージ（5件）
+    echo "🚨 最新エラー:"
+    ssh Cinnamon "docker logs $container --tail 100 2>&1 | grep -E '(ERROR|403|failed|exception)' | tail -5" || echo "  エラーログなし"
+    
+    # 最後の成功処理
+    echo ""
+    echo "✅ 最後の成功処理:"
+    ssh Cinnamon "docker logs $container --tail 1000 2>&1 | grep -E '(success|blocked|completed)' | tail -1" || echo "  成功ログなし"
+    
+    # Cookie関連のメッセージ
+    echo ""
+    echo "🍪 Cookie状態:"
+    ssh Cinnamon "docker logs $container --tail 100 2>&1 | grep -i cookie | tail -3" || echo "  Cookie関連ログなし"
+    
+    echo ""
+done
+
+# 全体的な処理統計
+echo ""
+echo "📊 OVERALL PROCESSING STATISTICS (Last 1 hour)"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+total_attempts=0
+total_successes=0
+total_403s=0
+
+for account in "${accounts[@]}"; do
+    container="bulk-block-users-${account}-1"
+    attempts=$(ssh Cinnamon "docker logs $container --since='1h' 2>&1 | grep -c 'Processing'" || echo "0")
+    successes=$(ssh Cinnamon "docker logs $container --since='1h' 2>&1 | grep -c 'success'" || echo "0")
+    errors_403=$(ssh Cinnamon "docker logs $container --since='1h' 2>&1 | grep -c '403'" || echo "0")
+    
+    printf "%-15s: 試行%3d件, 成功%3d件, 403エラー%3d件\n" "$account" "$attempts" "$successes" "$errors_403"
+    
+    total_attempts=$((total_attempts + attempts))
+    total_successes=$((total_successes + successes))
+    total_403s=$((total_403s + errors_403))
+done
+
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+printf "合計            : 試行%3d件, 成功%3d件, 403エラー%3d件\n" "$total_attempts" "$total_successes" "$total_403s"
+
+# 処理停止の判定
+if [ "$total_attempts" -eq 0 ] || [ "$total_successes" -eq 0 ]; then
+    echo ""
+    echo "🚨 警告: 処理が完全に停止しています！"
+    echo "  推奨アクション:"
+    echo "  1. Cookie更新の実行"
+    echo "  2. API接続性の確認"
+    echo "  3. ログの詳細分析"
+fi
