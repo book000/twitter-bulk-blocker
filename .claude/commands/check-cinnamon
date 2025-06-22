@@ -424,25 +424,49 @@ echo "🏆 UPTIME MILESTONES ANALYSIS (稼働時間マイルストーン分析)"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 # Cinnamonサーバーからコンテナの稼働時間情報を取得
-CONTAINER_UPTIME_INFO=$(ssh Cinnamon "docker ps --format 'table {{.Names}}\t{{.Status}}' | grep -E 'Up [0-9]'" | head -1)
+# 稼働中のコンテナから最初の1つを選択（より正確なフィルタリング）
+CONTAINER_UPTIME_INFO=$(ssh Cinnamon "docker ps --format 'table {{.Names}}\t{{.Status}}' | grep -E '^bulk-block-users.*Up '" | head -1)
 
 if [ -n "$CONTAINER_UPTIME_INFO" ]; then
-    # 稼働時間テキストから時間を抽出・解析
-    UPTIME_TEXT=$(echo "$CONTAINER_UPTIME_INFO" | awk '{print $2, $3}')
+    # 稼働時間テキストから時間を抽出・解析（改良版）
+    # Statusフィールド全体を取得（例: "Up 3 hours (healthy)" → "Up 3 hours"）
+    UPTIME_TEXT=$(echo "$CONTAINER_UPTIME_INFO" | sed 's/.*\(Up [^(]*\).*/\1/' | sed 's/[[:space:]]*$//')
     
-    # 稼働時間の秒数への変換
+    # 稼働時間の秒数への変換（改良版：複数の形式に対応）
     UPTIME_SECONDS=0
+    
+    # "Up X seconds"形式
     if echo "$UPTIME_TEXT" | grep -q "second"; then
         UPTIME_SECONDS=$(echo "$UPTIME_TEXT" | grep -o '[0-9]\+' | head -1)
+    # "Up X minutes"形式
     elif echo "$UPTIME_TEXT" | grep -q "minute"; then
         UPTIME_MINUTES=$(echo "$UPTIME_TEXT" | grep -o '[0-9]\+' | head -1)
         UPTIME_SECONDS=$((UPTIME_MINUTES * 60))
+    # "Up X hours"形式
     elif echo "$UPTIME_TEXT" | grep -q "hour"; then
         UPTIME_HOURS=$(echo "$UPTIME_TEXT" | grep -o '[0-9]\+' | head -1)
         UPTIME_SECONDS=$((UPTIME_HOURS * 3600))
+    # "Up X days"形式
     elif echo "$UPTIME_TEXT" | grep -q "day"; then
         UPTIME_DAYS=$(echo "$UPTIME_TEXT" | grep -o '[0-9]\+' | head -1)
         UPTIME_SECONDS=$((UPTIME_DAYS * 86400))
+    # "Up About a minute"形式
+    elif echo "$UPTIME_TEXT" | grep -q "About a minute"; then
+        UPTIME_SECONDS=60
+    # "Up About an hour"形式
+    elif echo "$UPTIME_TEXT" | grep -q "About an hour"; then
+        UPTIME_SECONDS=3600
+    # その他の特殊ケース（フォールバック）
+    else
+        # 数値が含まれているかチェック
+        if echo "$UPTIME_TEXT" | grep -q '[0-9]'; then
+            # 最初の数値を取得してデフォルトで分として扱う
+            UPTIME_VALUE=$(echo "$UPTIME_TEXT" | grep -o '[0-9]\+' | head -1)
+            UPTIME_SECONDS=$((UPTIME_VALUE * 60))
+        else
+            # 数値が見つからない場合は0秒とする
+            UPTIME_SECONDS=0
+        fi
     fi
     
     # マイルストーン判定と記録
