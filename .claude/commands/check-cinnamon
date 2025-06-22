@@ -297,6 +297,16 @@ for container in $STOPPED_CONTAINERS $RUNNING_CONTAINERS; do
             BLOCKED=$(echo "$STATS" | grep "ブロック済み" | grep -o '[0-9,]*人' | tr -d ',人' | head -1)
             REMAINING=$(echo "$STATS" | grep "残り未処理" | grep -o '[0-9,]*人' | tr -d ',人' | head -1)
             
+            # 失敗ユーザーのステータス詳細分析
+            FAILED_STATS=$(ssh Cinnamon "docker logs $container" | grep -A 20 "失敗:" | grep -E "(active|suspended):" | tail -2)
+            ACTIVE_FAILED=0
+            SUSPENDED_FAILED=0
+            
+            if [ -n "$FAILED_STATS" ]; then
+                ACTIVE_FAILED=$(echo "$FAILED_STATS" | grep "active:" | grep -o '[0-9]*' | head -1 || echo "0")
+                SUSPENDED_FAILED=$(echo "$FAILED_STATS" | grep "suspended:" | grep -o '[0-9]*' | head -1 || echo "0")
+            fi
+            
             if [ -n "$TOTAL" ] && [ -n "$BLOCKED" ] && [ -n "$REMAINING" ]; then
                 # 永続的失敗数の推定（スキップされたユーザー）
                 PERMANENT_FAILURES=$(ssh Cinnamon "docker logs $container" | grep "既知の永続的失敗\|suspended\|not_found\|deactivated" | wc -l)
@@ -330,6 +340,24 @@ for container in $STOPPED_CONTAINERS $RUNNING_CONTAINERS; do
                 fi
                 echo "    - 実質未処理: ${EFFECTIVE_REMAINING}人"
                 
+                # 失敗ユーザーのステータス内訳表示
+                TOTAL_FAILED=$(ssh Cinnamon "docker logs $container" | grep "失敗:" | grep -o '[0-9,]*人' | tr -d ',人' | head -1 || echo "0")
+                if [ -n "$TOTAL_FAILED" ] && [ "$TOTAL_FAILED" -gt 0 ]; then
+                    echo "  📊 失敗: ${TOTAL_FAILED}人"
+                    echo "    - ステータス別:"
+                    if [ "$ACTIVE_FAILED" -gt 0 ]; then
+                        echo "      active: ${ACTIVE_FAILED}人"
+                        # active失敗数が多い場合の警告
+                        if [ "$ACTIVE_FAILED" -gt 1000 ]; then
+                            echo "      ⚠️ WARNING: Active失敗数が多い - 403エラーリスク増加の可能性"
+                        fi
+                    fi
+                    if [ "$SUSPENDED_FAILED" -gt 0 ]; then
+                        echo "      suspended: ${SUSPENDED_FAILED}人"
+                    fi
+                    echo "    - HTTPエラー別:"
+                fi
+                
                 # 完了状況の判定
                 if [ "$ACTUAL_COMPLETION_RATE" = "100.0" ]; then
                     echo "    - 🎉 処理状況: 完全完了（100%）"
@@ -344,6 +372,96 @@ for container in $STOPPED_CONTAINERS $RUNNING_CONTAINERS; do
         echo
     fi
 done
+
+# 3.5. 個別コンテナ403エラー検出（新機能）
+echo "🚨 INDIVIDUAL CONTAINER 403 ERROR DETECTION"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+if [ -n "$RUNNING_CONTAINERS" ]; then
+    echo "🔍 403エラー検出 (稼働中コンテナ個別分析):"
+    
+    TOTAL_403_ERRORS=0
+    AFFECTED_CONTAINERS=""
+    
+    for container in $RUNNING_CONTAINERS; do
+        SERVICE_NAME=$(echo $container | sed 's/bulk-block-users-//' | sed 's/-1$//')
+        
+        # 直近10分間の403エラーを検出
+        RECENT_403=$(ssh Cinnamon "docker logs --since '10m' $container" 2>/dev/null | grep -c "403\|ブロック失敗.*403\|Status Code: 403")
+        
+        # 直近30分間の403エラーを検出
+        EXTENDED_403=$(ssh Cinnamon "docker logs --since '30m' $container" 2>/dev/null | grep -c "403\|ブロック失敗.*403\|Status Code: 403")
+        
+        # 全ログからの403エラー総数
+        TOTAL_403=$(ssh Cinnamon "docker logs $container" 2>/dev/null | grep -c "403\|ブロック失敗.*403\|Status Code: 403")
+        
+        if [ "$RECENT_403" -gt 0 ] || [ "$EXTENDED_403" -gt 5 ]; then
+            echo "  🚨 $SERVICE_NAME ($container):"
+            echo "    - 直近10分: ${RECENT_403}件の403エラー"
+            echo "    - 直近30分: ${EXTENDED_403}件の403エラー"
+            echo "    - 総計: ${TOTAL_403}件の403エラー"
+            
+            # 403エラーの詳細分析
+            if [ "$RECENT_403" -gt 0 ]; then
+                echo "    - 🔍 最新403エラーサンプル (直近5件):"
+                ssh Cinnamon "docker logs --since '10m' $container" 2>/dev/null | \
+                    grep "403\|ブロック失敗.*403\|Status Code: 403" | \
+                    tail -5 | \
+                    while IFS= read -r line; do
+                        echo "      → $line"
+                    done
+                
+                # 重要度判定
+                if [ "$RECENT_403" -ge 10 ]; then
+                    echo "    - ⚠️ 重要度: CRITICAL - 多発する403エラー (${RECENT_403}件/10分)"
+                elif [ "$RECENT_403" -ge 5 ]; then
+                    echo "    - ⚠️ 重要度: HIGH - 頻発する403エラー (${RECENT_403}件/10分)"
+                else
+                    echo "    - ⚠️ 重要度: MEDIUM - 散発的403エラー (${RECENT_403}件/10分)"
+                fi
+            fi
+            
+            TOTAL_403_ERRORS=$((TOTAL_403_ERRORS + RECENT_403))
+            AFFECTED_CONTAINERS="$AFFECTED_CONTAINERS $SERVICE_NAME"
+        else
+            echo "  ✅ $SERVICE_NAME ($container): 403エラーなし (正常稼働)"
+        fi
+    done
+    
+    echo
+    echo "📊 403エラー概要:"
+    if [ "$TOTAL_403_ERRORS" -gt 0 ]; then
+        echo "  🚨 総403エラー数 (直近10分): ${TOTAL_403_ERRORS}件"
+        echo "  🏷️ 影響コンテナ:$AFFECTED_CONTAINERS"
+        
+        # Issue #71との照合
+        echo "  📋 Issue #71予測との比較:"
+        echo "    - 予測: 1-2時間で403エラー発生"
+        echo "    - 実際: 部分的コンテナで403エラー確認"
+        echo "    - 状況: 予測が的中（一部サービスで早期発生）"
+        
+        # 緊急推奨事項
+        echo "  🛠️ 緊急推奨事項:"
+        if [ "$TOTAL_403_ERRORS" -ge 20 ]; then
+            echo "    1. 即座にシステム停止を検討"
+            echo "    2. 影響コンテナの緊急Cookie再読み込み"
+            echo "    3. ヘッダー設定の緊急見直し"
+        elif [ "$TOTAL_403_ERRORS" -ge 10 ]; then
+            echo "    1. 影響コンテナの優先的調査"
+            echo "    2. Cookie状態の確認と再読み込み"
+            echo "    3. 処理速度の調整検討"
+        else
+            echo "    1. 継続監視の強化"
+            echo "    2. ログの詳細確認"
+            echo "    3. 予防的Cookie更新検討"
+        fi
+    else
+        echo "  ✅ 403エラーなし: 全コンテナが正常稼働中"
+    fi
+else
+    echo "  ⚠️ 稼働中コンテナなし - 403エラー検出不可"
+fi
+echo
 
 # 4. 認証状態の詳細確認（長期履歴対応）
 echo "🔐 AUTHENTICATION STATUS (長期エラー履歴分析)"
@@ -518,6 +636,61 @@ if [ -n "$CONTAINER_UPTIME_INFO" ]; then
     echo "🏆 マイルストーン: $MILESTONE_ACHIEVED"
     echo "📊 品質レベル: $QUALITY_LEVEL"
     echo "⏰ 推奨監視間隔: $RECOMMENDED_INTERVAL"
+    
+    # 長時間稼働アラート機能
+    UPTIME_HOURS=$(echo "scale=1; $UPTIME_SECONDS / 3600" | bc 2>/dev/null || echo "0")
+    UPTIME_HOURS_INT=$(echo "$UPTIME_HOURS" | cut -d. -f1)
+    
+    echo
+    echo "🚨 LONG-TERM UPTIME ALERTS (長時間稼働アラートシステム)"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    # 1時間アラート
+    if [ -n "$UPTIME_HOURS_INT" ] && [ "$UPTIME_HOURS_INT" -ge 1 ] && [ "$UPTIME_HOURS_INT" -lt 2 ]; then
+        echo "⏰ 1時間経過アラート: 初期安定性を確認"
+        echo "  📊 状態: 基本安定期 - 短期問題の監視継続"
+        echo "  🔍 監視項目: 認証エラー、基本的な403エラー"
+        echo "  ⏳ 次回重要チェック: 2時間経過時"
+    fi
+    
+    # 2時間アラート
+    if [ -n "$UPTIME_HOURS_INT" ] && [ "$UPTIME_HOURS_INT" -ge 2 ] && [ "$UPTIME_HOURS_INT" -lt 3 ]; then
+        echo "🏆 2時間経過アラート: ENTERPRISE級安定性を達成"
+        echo "  📈 状態: 企業レベル安定期 - 中期安定性実証"
+        echo "  🔬 監視強化: ヘッダーパターン検出、Cookie劣化の兆候"
+        echo "  ⚠️ 注意: Issue #71当初予測時期（1-2時間）を通過"
+        echo "  ⏳ 次回重要チェック: 3時間経過時（真の長期稼働検証）"
+    fi
+    
+    # 3時間アラート（現在の状況）
+    if [ -n "$UPTIME_HOURS_INT" ] && [ "$UPTIME_HOURS_INT" -ge 3 ] && [ "$UPTIME_HOURS_INT" -lt 6 ]; then
+        echo "🎉 3時間経過アラート: ULTRA-STABLE級異例安定性を達成！"
+        echo "  📊 状態: 超長期安定期 - 予測を大幅に上回る安定性"
+        echo "  🔬 重要監視: アンチボット検出パターン、IP評価変化"
+        echo "  📈 意義: Issue #71予測を大幅に修正（3-4時間 → 6-8時間以降）"
+        echo "  🔧 推奨: 現在の設定・戦略の継続"
+        echo "  ⏳ 次回重要チェック: 6時間経過時（真の限界検証）"
+    fi
+    
+    # 6時間アラート
+    if [ -n "$UPTIME_HOURS_INT" ] && [ "$UPTIME_HOURS_INT" -ge 6 ] && [ "$UPTIME_HOURS_INT" -lt 12 ]; then
+        echo "🌟 6時間経過アラート: 異常レベルの長期安定性"
+        echo "  🚨 状態: 設計限界に挑戦中 - 前例のない安定性"
+        echo "  🔬 厳重監視: 固定パターン検出、セッション劣化、認証トークン期限"
+        echo "  ⚠️ 警戒: アンチボットシステムの本格検出が開始される可能性"
+        echo "  🛠️ 推奨対策: 予防的Cookie再読み込み、ヘッダー戦略変更の検討"
+        echo "  ⏳ 次回重要チェック: 12時間経過時（最終検証段階）"
+    fi
+    
+    # 12時間以上アラート
+    if [ -n "$UPTIME_HOURS_INT" ] && [ "$UPTIME_HOURS_INT" -ge 12 ]; then
+        echo "🏅 12時間以上経過アラート: 記録的長期安定性を達成"
+        echo "  🚨 状態: 記録的稼働継続 - システム限界を突破"
+        echo "  🔬 最高警戒: IP制限、アカウント制限、大規模アンチボット検出"
+        echo "  ⚠️ 緊急監視: 403エラーの大量発生、処理速度の急激な低下"
+        echo "  🛠️ 緊急対策準備: システム停止判断、完全リセット手順"
+        echo "  ⏳ 継続監視: 1-2時間間隔での厳重チェック"
+    fi
     
     # マイルストーン履歴の記録・更新
     if [ -f "$MILESTONES_FILE" ]; then

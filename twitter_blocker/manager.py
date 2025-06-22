@@ -35,6 +35,39 @@ class BulkBlockManager:
             enable_forwarded_for
         )
         self.retry_manager = RetryManager()
+        
+        # HTTPエラー分析システムの初期化
+        try:
+            from .error_analytics import HTTPErrorAnalytics
+            self.api.error_analytics = HTTPErrorAnalytics(self.database)
+            if debug_mode:
+                print("📊 HTTPエラー分析システム初期化完了")
+        except Exception as e:
+            if debug_mode:
+                print(f"⚠️ HTTPエラー分析システム初期化失敗: {e}")
+            self.api.error_analytics = None
+        
+        # パフォーマンス監視システムの初期化
+        try:
+            from .performance_monitor import PerformanceMonitor
+            self.performance_monitor = PerformanceMonitor(self.database)
+            if debug_mode:
+                print("🚀 パフォーマンス監視システム初期化完了")
+        except Exception as e:
+            if debug_mode:
+                print(f"⚠️ パフォーマンス監視システム初期化失敗: {e}")
+            self.performance_monitor = None
+        
+        # ユーザーステータス監視システムの初期化
+        try:
+            from .user_status_monitor import UserStatusMonitor
+            self.status_monitor = UserStatusMonitor(self.database)
+            if debug_mode:
+                print("👥 ユーザーステータス監視システム初期化完了")
+        except Exception as e:
+            if debug_mode:
+                print(f"⚠️ ユーザーステータス監視システム初期化失敗: {e}")
+            self.status_monitor = None
 
     def load_target_users(self) -> List[str]:
         """ブロック対象ユーザーリストを読み込み"""
@@ -107,7 +140,10 @@ class BulkBlockManager:
 
         # セッション開始
         session_id = self.database.start_session(total_targets)
-
+        
+        # パフォーマンス監視開始
+        processing_start_time = time.time()
+        
         stats = {"processed": 0, "blocked": 0, "skipped": 0, "errors": 0}
 
         print(f"\n処理開始: {len(remaining_users)}人を処理します")
@@ -120,6 +156,55 @@ class BulkBlockManager:
         else:
             # screen_name形式も新しいバッチ処理を使用
             self._process_screen_names_batch(remaining_users, user_format, stats, delay, batch_size, session_id)
+
+        # パフォーマンス分析と記録
+        processing_end_time = time.time()
+        total_processing_time = processing_end_time - processing_start_time
+        
+        if self.performance_monitor and total_processing_time > 0:
+            # 全体パフォーマンス指標の計算
+            total_requests = stats["processed"] + stats["errors"]
+            requests_per_second = total_requests / total_processing_time if total_processing_time > 0 else 0
+            success_rate = stats["blocked"] / max(total_requests, 1)
+            
+            # パフォーマンスメトリクスの記録
+            performance_metrics = {
+                'processing_time': total_processing_time,
+                'requests_per_second': requests_per_second,
+                'success_rate': success_rate,
+                'batch_size': batch_size,
+                'total_processed': stats["processed"],
+                'total_blocked': stats["blocked"],
+                'total_errors': stats["errors"],
+                'context': {
+                    'user_format': user_format,
+                    'delay_setting': delay,
+                    'max_users_limit': max_users
+                }
+            }
+            
+            self.performance_monitor.record_processing_metrics(performance_metrics)
+            
+            # 処理ウィンドウ統計の更新
+            window_data = {
+                'window_start': processing_start_time,
+                'window_end': processing_end_time,
+                'total_processed': stats["processed"],
+                'total_blocked': stats["blocked"],
+                'total_errors': stats["errors"],
+                'avg_processing_time': total_processing_time / max(total_requests, 1),
+                'requests_per_second': requests_per_second,
+                'success_rate': success_rate
+            }
+            
+            self.performance_monitor.update_processing_window(window_data)
+            
+            # 劣化閾値のチェック
+            alerts = self.performance_monitor.check_degradation_thresholds(performance_metrics)
+            if alerts:
+                print(f"\n⚠️ パフォーマンスアラート: {len(alerts)}件の問題を検出")
+                for alert in alerts:
+                    print(f"  {alert['severity']}: {alert['title']}")
 
         # セッション完了
         self.database.complete_session(session_id)
