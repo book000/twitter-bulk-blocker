@@ -1235,8 +1235,13 @@ class TwitterAPI:
             self._403_error_stats["classified_errors"][error_type] += 1
             
             # 403エラー専用処理：Cookie強制更新（無限ループ防止）
+            def reset_403_errors():
+                """403エラー統計の強制リセット"""
+                self._403_error_stats["total_403_errors"] = 0
+                self._403_error_stats["classified_errors"] = {}
+                
             if self.cookie_manager.force_refresh_on_error_threshold(
-                self._403_error_stats["total_403_errors"], threshold=5):
+                self._403_error_stats["total_403_errors"], threshold=5, reset_callback=reset_403_errors):
                 print(f"🔄 403エラー蓄積による強制リトライ対象: {action_name}")
                 # Cookie更新後の待機時間を追加（無限ループ防止）
                 import time

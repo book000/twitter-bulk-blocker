@@ -153,11 +153,20 @@ class CookieManager:
         self._cache_timestamp = None
         self._file_mtime = None
     
-    def force_refresh_on_error_threshold(self, error_count: int, threshold: int = 5) -> bool:
+    def force_refresh_on_error_threshold(self, error_count: int, threshold: int = 5, reset_callback=None) -> bool:
         """403エラーが閾値を超えた場合の強制Cookie更新（無限ループ防止）"""
         if error_count >= threshold:
             print(f"🚨 403エラー{error_count}回検出: Cookie強制更新実行（閾値: {threshold}）")
             self.clear_cache()
+            
+            # Cookie更新時に403エラーカウンターを強制リセット
+            if reset_callback and callable(reset_callback):
+                try:
+                    reset_callback()
+                    print("🔄 403エラーカウンター強制リセット完了（Cookie更新時）")
+                except Exception as e:
+                    print(f"⚠️ 403エラーカウンターリセット失敗: {e}")
+                    
             return True
         return False
     
