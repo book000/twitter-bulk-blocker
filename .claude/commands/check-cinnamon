@@ -44,6 +44,7 @@ while [[ $# -gt 0 ]]; do
             echo "  completion      完了率分析"
             echo "  health          長期ヘルス分析"
             echo "  container-health コンテナ健康状態・再起動推奨"
+            echo "  rate-limit      レートリミット監視・処理予測"
             echo "  performance     パフォーマンス指標・履歴比較"
             echo "  accounts        アカウント別詳細分析・最適化提案"
             echo "  processing      処理状態詳細分析・Cookie状態確認"
@@ -91,6 +92,9 @@ if [ -n "$MODULES" ]; then
                 ;;
             container-health)
                 .claude/commands/check-cinnamon-container-health
+                ;;
+            rate-limit)
+                .claude/commands/check-cinnamon-rate-limit-monitor
                 ;;
             performance)
                 .claude/commands/check-cinnamon-performance

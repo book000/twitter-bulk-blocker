@@ -1,0 +1,139 @@
+#!/bin/bash
+
+# check-cinnamon-rate-limit-monitor - レートリミット監視・予測分析モジュール
+# 待機時間の追跡と処理再開時刻の予測
+
+set -e
+
+echo "⏰ RATE LIMIT MONITORING & PREDICTION"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# コンテナリスト
+containers=("book000" "ihc_amot" "book000_vrc" "authorizedkey" "tomachi_priv" "tomarabbit")
+current_time=$(date '+%s')
+current_time_readable=$(date '+%Y-%m-%d %H:%M:%S')
+
+echo "📊 Rate Limit Status Analysis:"
+echo "Current Time: $current_time_readable"
+echo ""
+
+total_waiting=0
+active_processing=0
+rate_limited=0
+
+for container in "${containers[@]}"; do
+    container_name="bulk-block-users-${container}-1"
+    
+    # コンテナ状態確認
+    is_running=$(ssh Cinnamon "docker ps --filter name=$container_name --format '{{.Names}}' | wc -l" 2>/dev/null || echo "0")
+    
+    if [ "$is_running" -eq 0 ]; then
+        echo "🔴 $container: 停止中"
+        continue
+    fi
+    
+    # 最近のログからレートリミット情報を取得
+    recent_logs=$(ssh Cinnamon "docker logs $container_name --since 10m 2>/dev/null | tail -20" || echo "")
+    
+    # レートリミット検出
+    rate_limit_info=$(echo "$recent_logs" | grep -E "(レートリミット検出|Rate limit exceeded|リセット時刻)" | tail -3)
+    
+    if [[ "$rate_limit_info" == *"レートリミット検出"* ]]; then
+        # 待機時間抽出
+        wait_time=$(echo "$rate_limit_info" | grep "レートリミット検出" | grep -o "[0-9.]*分間" | head -1)
+        reset_time=$(echo "$recent_logs" | grep "リセット時刻:" | tail -1 | sed 's/.*リセット時刻: //')
+        
+        echo "⏳ $container: レートリミット待機中"
+        echo "   待機時間: $wait_time"
+        echo "   解除予定: $reset_time"
+        
+        # 解除時刻の計算
+        if [ -n "$reset_time" ]; then
+            reset_timestamp=$(date -d "$reset_time" '+%s' 2>/dev/null || echo "0")
+            if [ "$reset_timestamp" -gt 0 ]; then
+                remaining_seconds=$((reset_timestamp - current_time))
+                if [ "$remaining_seconds" -gt 0 ]; then
+                    remaining_minutes=$((remaining_seconds / 60))
+                    remaining_seconds_mod=$((remaining_seconds % 60))
+                    echo "   残り時間: ${remaining_minutes}分${remaining_seconds_mod}秒"
+                else
+                    echo "   状態: 解除済み（処理再開可能）"
+                fi
+            fi
+        fi
+        
+        rate_limited=$((rate_limited + 1))
+        
+    elif [[ "$recent_logs" == *"Cookie更新待機中"* ]]; then
+        echo "🔄 $container: Cookie更新中"
+        wait_duration=$(echo "$recent_logs" | grep "Cookie更新待機中" | tail -1 | grep -o "経過: [0-9]*秒" | grep -o "[0-9]*" || echo "0")
+        echo "   経過時間: ${wait_duration}秒"
+        
+        total_waiting=$((total_waiting + 1))
+        
+    elif [[ "$recent_logs" == *"ブロック成功"* ]] || [[ "$recent_logs" == *"処理"* ]]; then
+        echo "✅ $container: アクティブ処理中"
+        recent_success=$(echo "$recent_logs" | grep -c "ブロック成功" || echo "0")
+        echo "   直近の成功: ${recent_success}件"
+        
+        active_processing=$((active_processing + 1))
+        
+    else
+        echo "📊 $container: 待機状態"
+        echo "   状態: 処理待機中"
+    fi
+    echo ""
+done
+
+# サマリー表示
+echo "📈 PROCESSING SUMMARY"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "アクティブ処理: $active_processing コンテナ"
+echo "Cookie更新中: $total_waiting コンテナ"
+echo "レートリミット: $rate_limited コンテナ"
+
+# 処理予測
+if [ "$rate_limited" -gt 0 ]; then
+    echo ""
+    echo "🔮 PROCESSING PREDICTION"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "レートリミット解除後、処理が活発化する見込み"
+    echo "Cookie更新完了後、複数コンテナが同時処理開始予定"
+fi
+
+# 効率性評価
+if [ "$active_processing" -gt 0 ]; then
+    efficiency="高効率"
+elif [ "$total_waiting" -gt 2 ]; then
+    efficiency="準備中"
+elif [ "$rate_limited" -gt 0 ]; then
+    efficiency="待機中"
+else
+    efficiency="安定稼働"
+fi
+
+echo ""
+echo "📊 システム効率性: $efficiency"
+
+# 推奨アクション
+echo ""
+echo "💡 RECOMMENDED MONITORING"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+if [ "$rate_limited" -gt 0 ]; then
+    echo "- レートリミット解除時刻の監視継続"
+    echo "- 解除後の処理再開確認"
+fi
+
+if [ "$total_waiting" -gt 2 ]; then
+    echo "- Cookie更新完了の監視"
+    echo "- 同期的処理開始の確認"
+fi
+
+if [ "$active_processing" -eq 0 ] && [ "$rate_limited" -eq 0 ] && [ "$total_waiting" -eq 0 ]; then
+    echo "- 処理完了状態の確認"
+    echo "- 新しいタスクの実行可能性確認"
+fi
+
+echo ""
+echo "🕒 分析実行時間: $(date '+%H:%M:%S')"
