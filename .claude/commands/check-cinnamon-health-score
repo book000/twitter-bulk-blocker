@@ -1,0 +1,134 @@
+#!/bin/bash
+
+# check-cinnamon-health-score - システムヘルススコア計算機能
+# 複数時間範囲でのエラー分析に基づく総合健康度算出
+
+set -e
+
+echo "🏥 SYSTEM HEALTH SCORE ANALYSIS"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# SSH接続確認
+if ! ssh -o ConnectTimeout=5 -o BatchMode=yes Cinnamon true 2>/dev/null; then
+    echo "❌ Cinnamonサーバーへの接続に失敗しました"
+    exit 1
+fi
+
+containers=("book000" "ihc_amot" "book000_vrc" "authorizedkey" "tomachi_priv" "tomarabbit")
+total_health_score=0
+container_count=${#containers[@]}
+
+echo "📊 CONTAINER-WISE HEALTH ANALYSIS:"
+echo ""
+
+for container in "${containers[@]}"; do
+    container_name="bulk-block-users-${container}-1"
+    
+    # 複数時間範囲でのエラー数取得
+    errors_1m=$(ssh Cinnamon "docker logs $container_name --since 1m 2>/dev/null | grep -E '🚨.*403エラー.*回検出' | wc -l" 2>/dev/null || echo 0)
+    errors_5m=$(ssh Cinnamon "docker logs $container_name --since 5m 2>/dev/null | grep -E '🚨.*403エラー.*回検出' | wc -l" 2>/dev/null || echo 0)
+    errors_10m=$(ssh Cinnamon "docker logs $container_name --since 10m 2>/dev/null | grep -E '🚨.*403エラー.*回検出' | wc -l" 2>/dev/null || echo 0)
+    errors_30m=$(ssh Cinnamon "docker logs $container_name --since 30m 2>/dev/null | grep -E '🚨.*403エラー.*回検出' | wc -l" 2>/dev/null || echo 0)
+    
+    # 成功・リセット処理数
+    success_10m=$(ssh Cinnamon "docker logs $container_name --since 10m 2>/dev/null | grep -c '✓.*ブロック成功'" 2>/dev/null || echo 0)
+    reset_10m=$(ssh Cinnamon "docker logs $container_name --since 10m 2>/dev/null | grep -c '📉.*エラーカウンターリセット'" 2>/dev/null || echo 0)
+    
+    # 数値検証
+    [ -z "$errors_1m" ] && errors_1m=0
+    [ -z "$errors_5m" ] && errors_5m=0
+    [ -z "$errors_10m" ] && errors_10m=0
+    [ -z "$errors_30m" ] && errors_30m=0
+    [ -z "$success_10m" ] && success_10m=0
+    [ -z "$reset_10m" ] && reset_10m=0
+    
+    # ヘルススコア計算（100点満点）
+    health_score=100
+    
+    # エラー数による減点
+    if [ "$errors_1m" -gt 0 ]; then
+        health_score=$((health_score - errors_1m * 10))  # 1分間エラーは重大
+    fi
+    if [ "$errors_5m" -gt 0 ]; then
+        health_score=$((health_score - errors_5m * 2))   # 5分間エラーは中程度
+    fi
+    if [ "$errors_10m" -gt 0 ]; then
+        health_score=$((health_score - errors_10m * 1))  # 10分間エラーは軽微
+    fi
+    
+    # 成功処理による加点
+    if [ "$success_10m" -gt 10 ]; then
+        health_score=$((health_score + 5))  # 高い成功率は良好
+    fi
+    
+    # 最小・最大値制限
+    [ "$health_score" -lt 0 ] && health_score=0
+    [ "$health_score" -gt 100 ] && health_score=100
+    
+    # ヘルス状態判定
+    if [ "$health_score" -ge 90 ]; then
+        status="🟢 EXCELLENT"
+        recommendation="継続監視"
+    elif [ "$health_score" -ge 70 ]; then
+        status="🟡 GOOD"
+        recommendation="定期チェック"
+    elif [ "$health_score" -ge 50 ]; then
+        status="🟠 WARNING"
+        recommendation="詳細分析必要"
+    elif [ "$health_score" -ge 20 ]; then
+        status="🔴 CRITICAL"
+        recommendation="即座対応必要"
+    else
+        status="⚫ FAILED"
+        recommendation="緊急対応必要"
+    fi
+    
+    # 結果表示
+    printf "📊 %-15s: %3d点 %s\n" "$container" "$health_score" "$status"
+    printf "   エラー推移: 1分=%d, 5分=%d, 10分=%d, 30分=%d\n" "$errors_1m" "$errors_5m" "$errors_10m" "$errors_30m"
+    printf "   成功処理: %d件 (10分間), 推奨: %s\n" "$success_10m" "$recommendation"
+    
+    # 改善トレンド分析
+    if [ "$errors_1m" -eq 0 ] && [ "$errors_5m" -eq 0 ] && [ "$errors_10m" -eq 0 ]; then
+        echo "   📈 トレンド: 完全安定 - エラーなし"
+    elif [ "$errors_1m" -eq 0 ] && [ "$errors_5m" -eq 0 ]; then
+        echo "   📈 トレンド: 改善済み - 直近5分でエラー停止"
+    elif [ "$errors_1m" -eq 0 ]; then
+        echo "   📈 トレンド: 改善中 - 直近1分でエラー停止"
+    elif [ "$errors_1m" -lt "$errors_5m" ]; then
+        echo "   📉 トレンド: 悪化中 - エラー増加傾向"
+    else
+        echo "   🔄 トレンド: 変動中 - 継続監視必要"
+    fi
+    
+    echo ""
+    
+    total_health_score=$((total_health_score + health_score))
+done
+
+# 全体ヘルススコア計算
+overall_health=$((total_health_score / container_count))
+
+echo "🌟 OVERALL SYSTEM HEALTH"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+printf "🏥 システム全体ヘルススコア: %d/100点\n" "$overall_health"
+
+if [ "$overall_health" -ge 90 ]; then
+    echo "🎉 ステータス: EXCELLENT - システムは最適な状態で稼働中"
+    echo "📋 推奨アクション: 現状維持・定期監視継続"
+elif [ "$overall_health" -ge 70 ]; then
+    echo "✅ ステータス: GOOD - システムは良好な状態"
+    echo "📋 推奨アクション: 継続監視・軽微な最適化検討"
+elif [ "$overall_health" -ge 50 ]; then
+    echo "⚠️ ステータス: WARNING - 注意が必要な状態"
+    echo "📋 推奨アクション: 詳細分析・予防的措置実施"
+elif [ "$overall_health" -ge 20 ]; then
+    echo "🚨 ステータス: CRITICAL - 緊急対応が必要"
+    echo "📋 推奨アクション: 即座の問題解決・コンテナ再起動検討"
+else
+    echo "💥 ステータス: SYSTEM FAILURE - システム障害状態"
+    echo "📋 推奨アクション: 緊急対応・全体再起動・エスカレーション"
+fi
+
+echo ""
+echo "🕒 ヘルススコア算出時間: $(date '+%H:%M:%S')"
