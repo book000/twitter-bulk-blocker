@@ -1,0 +1,112 @@
+#!/bin/bash
+
+# check-cinnamon-container-health - コンテナ健康状態の詳細分析モジュール
+# 停止コンテナの自動検知と再起動推奨
+
+set -e
+
+echo "🏥 CONTAINER HEALTH DETAILED ANALYSIS"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# コンテナリスト
+containers=("book000" "ihc_amot" "book000_vrc" "authorizedkey" "tomachi_priv" "tomarabbit")
+stopped_containers=()
+restart_recommended=()
+
+echo "📊 Container Status Check:"
+echo ""
+
+for container in "${containers[@]}"; do
+    container_name="bulk-block-users-${container}-1"
+    
+    # コンテナ状態取得
+    status_info=$(ssh Cinnamon "docker ps -a --filter name=$container_name --format '{{.Status}}' | head -1" 2>/dev/null || echo "Unknown")
+    
+    if [[ "$status_info" == *"Up"* ]]; then
+        # 稼働時間取得
+        uptime=$(echo "$status_info" | grep -o "Up.*" || echo "Unknown")
+        echo "✅ $container: $uptime"
+        
+        # 最近のエラーチェック
+        recent_errors=$(ssh Cinnamon "docker logs $container_name --since 10m 2>/dev/null | grep -c '403エラー.*回検出' || echo 0")
+        # 改行・空白除去
+        recent_errors=$(echo "$recent_errors" | tr -d '\n\r ')
+        # 数値検証
+        [[ ! "$recent_errors" =~ ^[0-9]+$ ]] && recent_errors=0
+        
+        if [ "$recent_errors" -gt 10 ]; then
+            echo "   ⚠️ 高頻度エラー検出: ${recent_errors}件/10分"
+            restart_recommended+=("$container")
+        fi
+        
+    elif [[ "$status_info" == *"Exited"* ]]; then
+        # 停止情報詳細
+        exit_code=$(echo "$status_info" | grep -o "Exited ([0-9]*)" | grep -o "[0-9]*" || echo "Unknown")
+        stopped_time=$(echo "$status_info" | grep -o "[0-9]* .* ago" || echo "Unknown")
+        
+        echo "🔴 $container: 停止中 (Exit code: $exit_code)"
+        echo "   停止時刻: $stopped_time前"
+        
+        # 停止理由の判定
+        case "$exit_code" in
+            0)
+                echo "   理由: 正常終了（処理完了）"
+                ;;
+            137)
+                echo "   理由: SIGKILL（強制終了）- 手動停止またはOOMキル"
+                restart_recommended+=("$container")
+                ;;
+            1)
+                echo "   理由: 一般的なエラー"
+                restart_recommended+=("$container")
+                ;;
+            *)
+                echo "   理由: 不明なエラー（コード: $exit_code）"
+                restart_recommended+=("$container")
+                ;;
+        esac
+        
+        stopped_containers+=("$container")
+        
+        # 最終ログ確認
+        echo "   📋 最終ログ:"
+        ssh Cinnamon "docker logs $container_name --tail 3 2>&1 | sed 's/^/      /'" 2>/dev/null || echo "      ログ取得失敗"
+        
+    else
+        echo "❓ $container: 状態不明"
+        echo "   詳細: $status_info"
+    fi
+    echo ""
+done
+
+# サマリー表示
+echo "📊 SUMMARY"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+total_containers=${#containers[@]}
+running_containers=$((total_containers - ${#stopped_containers[@]}))
+echo "稼働中: $running_containers/$total_containers コンテナ"
+
+if [ ${#stopped_containers[@]} -gt 0 ]; then
+    echo "停止中: ${stopped_containers[*]}"
+fi
+
+echo ""
+
+# 推奨アクション
+if [ ${#restart_recommended[@]} -gt 0 ]; then
+    echo "🚨 RECOMMENDED ACTIONS"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "以下のコンテナの再起動を推奨:"
+    for container in "${restart_recommended[@]}"; do
+        echo "  - $container"
+        echo "    再起動コマンド: docker restart bulk-block-users-${container}-1"
+    done
+    echo ""
+    echo "一括再起動: docker restart $(printf "bulk-block-users-%s-1 " "${restart_recommended[@]}")"
+else
+    echo "✅ すべてのコンテナが健全な状態です"
+fi
+
+echo ""
+echo "🕒 分析実行時間: $(date '+%H:%M:%S')"

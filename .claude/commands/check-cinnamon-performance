@@ -54,6 +54,14 @@ collect_current_metrics() {
         processed=$(ssh Cinnamon "docker logs $container --since='24h' 2>&1 | grep -E '(blocked|success|completed)' | wc -l" 2>/dev/null || echo "0")
         errors=$(ssh Cinnamon "docker logs $container --since='24h' 2>&1 | grep -E '(403|error|failed)' | wc -l" 2>/dev/null || echo "0")
         
+        # 改行・空白文字の除去
+        processed=$(echo "$processed" | tr -d '\n\r ')
+        errors=$(echo "$errors" | tr -d '\n\r ')
+        
+        # 数値でない場合は0に設定
+        [[ ! "$processed" =~ ^[0-9]+$ ]] && processed=0
+        [[ ! "$errors" =~ ^[0-9]+$ ]] && errors=0
+        
         total_processed[$account]=$processed
         total_errors[$account]=$errors
         
@@ -79,7 +87,7 @@ collect_current_metrics() {
     # 処理速度推定（24時間での処理数から算出）
     processing_speed=$(( total_processed_all / 24 ))
     
-    # JSONフォーマットで現在の指標を作成
+    # JSONフォーマットで現在の指標を作成（配列要素の存在確認付き）
     current_metrics=$(cat <<EOF
 {
   "timestamp": "$CURRENT_TIMESTAMP",
@@ -88,12 +96,12 @@ collect_current_metrics() {
   "overall_success_rate": $overall_success_rate,
   "processing_speed_per_hour": $processing_speed,
   "accounts": {
-    "book000": {"processed": ${total_processed[book000]}, "errors": ${total_errors[book000]}, "success_rate": ${success_rates[book000]}},
-    "ihc_amot": {"processed": ${total_processed[ihc_amot]}, "errors": ${total_errors[ihc_amot]}, "success_rate": ${success_rates[ihc_amot]}},
-    "book000_vrc": {"processed": ${total_processed[book000_vrc]}, "errors": ${total_errors[book000_vrc]}, "success_rate": ${success_rates[book000_vrc]}},
-    "authorizedkey": {"processed": ${total_processed[authorizedkey]}, "errors": ${total_errors[authorizedkey]}, "success_rate": ${success_rates[authorizedkey]}},
-    "tomachi_priv": {"processed": ${total_processed[tomachi_priv]}, "errors": ${total_errors[tomachi_priv]}, "success_rate": ${success_rates[tomachi_priv]}},
-    "tomarabbit": {"processed": ${total_processed[tomarabbit]}, "errors": ${total_errors[tomarabbit]}, "success_rate": ${success_rates[tomarabbit]}}
+    "book000": {"processed": ${total_processed[book000]:-0}, "errors": ${total_errors[book000]:-0}, "success_rate": ${success_rates[book000]:-0}},
+    "ihc_amot": {"processed": ${total_processed[ihc_amot]:-0}, "errors": ${total_errors[ihc_amot]:-0}, "success_rate": ${success_rates[ihc_amot]:-0}},
+    "book000_vrc": {"processed": ${total_processed[book000_vrc]:-0}, "errors": ${total_errors[book000_vrc]:-0}, "success_rate": ${success_rates[book000_vrc]:-0}},
+    "authorizedkey": {"processed": ${total_processed[authorizedkey]:-0}, "errors": ${total_errors[authorizedkey]:-0}, "success_rate": ${success_rates[authorizedkey]:-0}},
+    "tomachi_priv": {"processed": ${total_processed[tomachi_priv]:-0}, "errors": ${total_errors[tomachi_priv]:-0}, "success_rate": ${success_rates[tomachi_priv]:-0}},
+    "tomarabbit": {"processed": ${total_processed[tomarabbit]:-0}, "errors": ${total_errors[tomarabbit]:-0}, "success_rate": ${success_rates[tomarabbit]:-0}}
   }
 }
 EOF
