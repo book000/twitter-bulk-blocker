@@ -35,12 +35,12 @@ MEDIUM_SERVICES=""
 for container in $CONTAINERS; do
     service=$(echo $container | cut -d- -f4)
     
-    # 10分間の403エラー数
-    count_10m=$(ssh Cinnamon "docker logs $container --since='10m' 2>&1 | grep '403' | wc -l")
+    # 10分間の403エラー数（正確なパターンマッチング）
+    count_10m=$(ssh Cinnamon "docker logs $container --since='10m' 2>&1 | grep -E '(🚨.*403エラー.*回検出|403 Forbidden|HTTP/1.1 403)' | wc -l")
     
     # 30分間の403エラー数（詳細モードのみ）
     if [ "$BRIEF" = false ]; then
-        count_30m=$(ssh Cinnamon "docker logs $container --since='30m' 2>&1 | grep '403' | wc -l")
+        count_30m=$(ssh Cinnamon "docker logs $container --since='30m' 2>&1 | grep -E '(🚨.*403エラー.*回検出|403 Forbidden|HTTP/1.1 403)' | wc -l")
     fi
     
     TOTAL_ERRORS=$((TOTAL_ERRORS + count_10m))

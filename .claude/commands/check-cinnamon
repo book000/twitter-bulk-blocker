@@ -149,8 +149,8 @@ fi
 echo "💡 RECOMMENDED ACTIONS"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-# 簡単な推奨アクション判定
-TOTAL_ERRORS=$(ssh Cinnamon 'total=0; for container in bulk-block-users-book000-1 bulk-block-users-ihc_amot-1 bulk-block-users-book000_vrc-1 bulk-block-users-authorizedkey-1 bulk-block-users-tomachi_priv-1 bulk-block-users-tomarabbit-1; do count=$(docker logs $container --since="10m" 2>&1 | grep "403" | wc -l); total=$((total + count)); done; echo $total')
+# 簡単な推奨アクション判定（正確なパターンマッチング）
+TOTAL_ERRORS=$(ssh Cinnamon 'total=0; for container in bulk-block-users-book000-1 bulk-block-users-ihc_amot-1 bulk-block-users-book000_vrc-1 bulk-block-users-authorizedkey-1 bulk-block-users-tomachi_priv-1 bulk-block-users-tomarabbit-1; do count=$(docker logs $container --since="10m" 2>&1 | grep -E "(🚨.*403エラー.*回検出|403 Forbidden|HTTP/1.1 403)" | wc -l); total=$((total + count)); done; echo $total')
 
 if [ "$TOTAL_ERRORS" -gt 50 ]; then
     echo "🚨 CRITICAL: 高頻度403エラー ($TOTAL_ERRORS件/10分)"

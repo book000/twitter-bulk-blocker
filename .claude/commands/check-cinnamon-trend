@@ -1,0 +1,125 @@
+#!/bin/bash
+
+# check-cinnamon-trend - 403エラー改善トレンド分析機能
+# 時系列でのエラー数変化を検出し、改善・悪化傾向を判定
+
+set -e
+
+echo "=== CINNAMON SERVER TREND ANALYSIS ==="
+echo "Timestamp: $(date '+%Y-%m-%d %H:%M:%S')"
+echo ""
+
+# SSH接続確認
+if ! ssh -o ConnectTimeout=5 -o BatchMode=yes Cinnamon true 2>/dev/null; then
+    echo "❌ Cinnamonサーバーへの接続に失敗しました"
+    exit 1
+fi
+
+echo "🔍 403ERROR TREND ANALYSIS"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# 各コンテナの403エラートレンド分析
+containers=("book000" "ihc_amot" "book000_vrc" "authorizedkey" "tomachi_priv" "tomarabbit")
+
+for container in "${containers[@]}"; do
+    container_name="bulk-block-users-${container}-1"
+    
+    # 各時間窓でのエラー数をカウント
+    errors_1m=$(ssh Cinnamon "docker logs $container_name --since 1m 2>/dev/null | grep -c '🚨.*403エラー.*回検出'" 2>/dev/null || echo 0)
+    errors_5m=$(ssh Cinnamon "docker logs $container_name --since 5m 2>/dev/null | grep -c '🚨.*403エラー.*回検出'" 2>/dev/null || echo 0)
+    errors_10m=$(ssh Cinnamon "docker logs $container_name --since 10m 2>/dev/null | grep -c '🚨.*403エラー.*回検出'" 2>/dev/null || echo 0)
+    errors_30m=$(ssh Cinnamon "docker logs $container_name --since 30m 2>/dev/null | grep -c '🚨.*403エラー.*回検出'" 2>/dev/null || echo 0)
+    
+    # 数値チェック
+    [ -z "$errors_1m" ] && errors_1m=0
+    [ -z "$errors_5m" ] && errors_5m=0
+    [ -z "$errors_10m" ] && errors_10m=0
+    [ -z "$errors_30m" ] && errors_30m=0
+    
+    # 成功処理数もカウント
+    success_10m=$(ssh Cinnamon "docker logs $container_name --since 10m 2>/dev/null | grep -c '✓.*ブロック成功'" 2>/dev/null || echo 0)
+    reset_10m=$(ssh Cinnamon "docker logs $container_name --since 10m 2>/dev/null | grep -c '📉.*エラーカウンターリセット'" 2>/dev/null || echo 0)
+    
+    [ -z "$success_10m" ] && success_10m=0
+    [ -z "$reset_10m" ] && reset_10m=0
+    
+    # トレンド判定
+    if [ "$errors_1m" -eq 0 ] && [ "$errors_5m" -eq 0 ]; then
+        status="✅ STABLE"
+        trend="安定稼働中"
+    elif [ "$errors_1m" -eq 0 ] && [ "$errors_5m" -gt 0 ]; then
+        status="📈 IMPROVING"
+        trend="改善傾向"
+    elif [ "$errors_1m" -gt 0 ] && [ "$errors_5m" -gt "$errors_1m" ]; then
+        status="📉 DEGRADING"
+        trend="悪化傾向"
+    elif [ "$errors_1m" -gt 0 ] && [ "$errors_5m" -eq "$errors_1m" ]; then
+        status="⚠️ ACTIVE"
+        trend="エラー継続中"
+    else
+        status="🔄 VARIABLE"
+        trend="変動中"
+    fi
+    
+    # 結果表示
+    printf "📊 %-15s %s (%s)\n" "$container:" "$status" "$trend"
+    printf "   時系列: 1分=%d件, 5分=%d件, 10分=%d件, 30分=%d件\n" "$errors_1m" "$errors_5m" "$errors_10m" "$errors_30m"
+    
+    if [ "$success_10m" -gt 0 ] || [ "$reset_10m" -gt 0 ]; then
+        printf "   回復力: 成功処理=%d件, リセット=%d件 (過去10分)\n" "$success_10m" "$reset_10m"
+    fi
+    
+    # 改善提案
+    if [ "$errors_1m" -gt 3 ]; then
+        echo "   🚨 対応必要: 直近1分で${errors_1m}件のエラー - コンテナ再起動を検討"
+    elif [ "$errors_5m" -gt 10 ]; then
+        echo "   ⚠️ 監視強化: 直近5分で${errors_5m}件のエラー - 詳細分析が必要"
+    elif [ "$errors_10m" -eq 0 ] && [ "$errors_30m" -gt 0 ]; then
+        echo "   ✅ 回復確認: 最近10分でエラー停止 - 修正効果が確認されました"
+    fi
+    
+    echo ""
+done
+
+# 全体トレンド分析
+total_1m=0
+total_5m=0
+total_10m=0
+
+for container in "${containers[@]}"; do
+    container_name="bulk-block-users-${container}-1"
+    total_1m=$((total_1m + $(ssh Cinnamon "docker logs $container_name --since 1m 2>/dev/null | grep -c '🚨.*403エラー.*回検出' || echo 0")))
+    total_5m=$((total_5m + $(ssh Cinnamon "docker logs $container_name --since 5m 2>/dev/null | grep -c '🚨.*403エラー.*回検出' || echo 0")))
+    total_10m=$((total_10m + $(ssh Cinnamon "docker logs $container_name --since 10m 2>/dev/null | grep -c '🚨.*403エラー.*回検出' || echo 0")))
+done
+
+echo "🌟 OVERALL TREND ASSESSMENT"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+printf "総エラー数推移: 1分=%d件, 5分=%d件, 10分=%d件\n" "$total_1m" "$total_5m" "$total_10m"
+
+if [ "$total_1m" -eq 0 ]; then
+    echo "🎉 システム状態: 優秀 - 直近1分間でエラーなし"
+elif [ "$total_5m" -gt "$((total_1m * 5))" ]; then
+    echo "📈 システム状態: 改善中 - エラー発生率が低下傾向"
+elif [ "$total_1m" -gt "$((total_5m / 3))" ]; then
+    echo "📉 システム状態: 注意 - エラー発生率が増加傾向"
+else
+    echo "🔄 システム状態: 安定 - エラー発生率は一定"
+fi
+
+echo ""
+echo "🔧 RECOMMENDED ACTIONS"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+if [ "$total_1m" -eq 0 ] && [ "$total_5m" -eq 0 ]; then
+    echo "✅ アクション不要: システムは安定稼働中です"
+elif [ "$total_1m" -eq 0 ] && [ "$total_5m" -gt 0 ]; then
+    echo "📊 継続監視: 改善傾向を継続監視してください"
+elif [ "$total_1m" -gt 5 ]; then
+    echo "🚨 緊急対応: 高頻度エラー発生中 - 該当コンテナの再起動を検討"
+else
+    echo "⚠️ 定期監視: 中程度のエラー - 5-10分後に再チェック推奨"
+fi
+
+echo ""
+echo "🕒 トレンド分析実行時間: $(date '+%H:%M:%S')"
