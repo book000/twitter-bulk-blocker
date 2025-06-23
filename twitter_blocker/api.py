@@ -1242,7 +1242,7 @@ class TwitterAPI:
                 
             if self.cookie_manager.force_refresh_on_error_threshold(
                 self._403_error_stats["total_403_errors"], threshold=5, reset_callback=reset_403_errors):
-                print(f"🔄 403エラー蓄積による強制リトライ対象: {action_name}")
+                print(f"🔄 403エラー蓄積による強制リトライ対象: {identifier}")
                 # Cookie更新後の待機時間を追加（無限ループ防止）
                 import time
                 time.sleep(2)
