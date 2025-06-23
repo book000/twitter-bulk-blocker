@@ -34,13 +34,29 @@ for container in "${containers[@]}"; do
     success_10m=$(ssh Cinnamon "docker logs $container_name --since 10m 2>/dev/null | grep -c '✓.*ブロック成功'" 2>/dev/null || echo 0)
     reset_10m=$(ssh Cinnamon "docker logs $container_name --since 10m 2>/dev/null | grep -c '📉.*エラーカウンターリセット'" 2>/dev/null || echo 0)
     
-    # 数値検証
+    # 数値検証・改行削除
     [ -z "$errors_1m" ] && errors_1m=0
     [ -z "$errors_5m" ] && errors_5m=0
     [ -z "$errors_10m" ] && errors_10m=0
     [ -z "$errors_30m" ] && errors_30m=0
     [ -z "$success_10m" ] && success_10m=0
     [ -z "$reset_10m" ] && reset_10m=0
+    
+    # 改行・空白文字の除去
+    errors_1m=$(echo "$errors_1m" | tr -d '\n\r ')
+    errors_5m=$(echo "$errors_5m" | tr -d '\n\r ')
+    errors_10m=$(echo "$errors_10m" | tr -d '\n\r ')
+    errors_30m=$(echo "$errors_30m" | tr -d '\n\r ')
+    success_10m=$(echo "$success_10m" | tr -d '\n\r ')
+    reset_10m=$(echo "$reset_10m" | tr -d '\n\r ')
+    
+    # 数値でない場合は0に設定
+    [[ ! "$errors_1m" =~ ^[0-9]+$ ]] && errors_1m=0
+    [[ ! "$errors_5m" =~ ^[0-9]+$ ]] && errors_5m=0
+    [[ ! "$errors_10m" =~ ^[0-9]+$ ]] && errors_10m=0
+    [[ ! "$errors_30m" =~ ^[0-9]+$ ]] && errors_30m=0
+    [[ ! "$success_10m" =~ ^[0-9]+$ ]] && success_10m=0
+    [[ ! "$reset_10m" =~ ^[0-9]+$ ]] && reset_10m=0
     
     # ヘルススコア計算（100点満点）
     health_score=100
