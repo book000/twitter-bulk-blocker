@@ -4,8 +4,8 @@
 
 name: "Twitter Bulk Blocker - Development Environment Setup"
 
-on:
-  workflow_dispatch:  # 手動実行を許可
+"on":
+  workflow_dispatch: {}  # 手動実行を許可
 
 # 環境変数の定義
 env:
