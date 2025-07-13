@@ -257,7 +257,5 @@ jobs:
           echo ""
           echo "⚠️ 注意事項:"
           echo "  - 実際のTwitter認証には本物のcookies.jsonが必要です"
-          echo "  - 本ツールの使用は自己責任で行ってください"
-          echo "  - Twitter/X.comの利用規約を遵守してください"
           echo ""
           echo "✨ Happy Coding with GitHub Copilot! ✨"
