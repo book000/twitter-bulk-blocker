@@ -30,13 +30,13 @@ jobs:
     steps:
       # 1. リポジトリのチェックアウト
       - name: "📁 Checkout Repository"
-        uses: actions/checkout@v4  # renovate: datasource=github-tags depName=actions/checkout
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0  # 全履歴を取得（バージョン情報用）
 
       # 2. Python環境のセットアップ
       - name: "🐍 Setup Python Environment"
-        uses: actions/setup-python@v5  # renovate: datasource=github-tags depName=actions/setup-python
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: 'pip'  # pip キャッシュを有効化
