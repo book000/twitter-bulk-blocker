@@ -2,14 +2,20 @@
 # このファイルは GitHub Copilot Code Agent のベース開発環境構築手順を定義します
 # 詳細: https://docs.github.com/ja/copilot/how-tos/agents/copilot-coding-agent/customizing-the-development-environment-for-copilot-coding-agent
 
-name: "Twitter Bulk Blocker - Development Environment Setup"
+name: "GitHub Copilot Code Agent Development Environment Setup"
 
 "on":
   workflow_dispatch: {}  # 手動実行を許可
+  push:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
+  pull_request:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
 
 # 環境変数の定義
 env:
-  PYTHON_VERSION: "3.13"
+  PYTHON_VERSION: "3.13"  # renovate: datasource=python-version
   TIMEZONE: "Asia/Tokyo"
   TWITTER_COOKIES_PATH: "/app/data/cookies.json"
   TWITTER_USERS_FILE: "/app/data/users.json"
@@ -17,20 +23,20 @@ env:
   CACHE_DIR: "/app/data/cache"
 
 jobs:
-  setup-development-environment:
+  copilot-setup-steps:
     name: "Development Environment Setup"
     runs-on: ubuntu-latest
     
     steps:
       # 1. リポジトリのチェックアウト
       - name: "📁 Checkout Repository"
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4  # renovate: datasource=github-tags depName=actions/checkout
         with:
           fetch-depth: 0  # 全履歴を取得（バージョン情報用）
 
       # 2. Python環境のセットアップ
       - name: "🐍 Setup Python Environment"
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v5  # renovate: datasource=github-tags depName=actions/setup-python
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: 'pip'  # pip キャッシュを有効化
@@ -68,7 +74,7 @@ jobs:
       # 6. Pythonの依存関係をアップグレード
       - name: "⬆️ Upgrade Python Package Manager"
         run: |
-          python3 -m pip install --upgrade pip==25.1.1
+          python3 -m pip install --upgrade pip==25.1.1  # renovate: datasource=pypi depName=pip
           echo "pip をアップグレードしました: $(pip --version)"
 
       # 7. プロジェクトの依存関係をインストール
