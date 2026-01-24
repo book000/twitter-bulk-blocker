@@ -1,237 +1,149 @@
-# CLAUDE.md - Twitter Bulk Blocker
+# CLAUDE.md
 
-このプロジェクト専用のClaude Code設定です。グローバル設定（~/.claude/CLAUDE.md）を継承し、プロジェクト固有の基本方針を定義します。
+## 目的
+- Claude Code の作業方針とプロジェクト固有ルールを示す。
+
+## 判断記録のルール
+- 判断は必ずレビュー可能な形で記録する。
+  1. 判断内容の要約
+  2. 検討した代替案
+  3. 採用しなかった案とその理由
+  4. 前提条件・仮定・不確実性
+  5. 他エージェントによるレビュー可否
+- 前提・仮定・不確実性を明示し、仮定を事実のように扱わない。
 
 ## プロジェクト概要
-
-**Twitter Bulk Blocker** - 高度なキャッシュ戦略とバッチ処理を備えたエンタープライズグレードの大規模Twitter一括ブロックシステム
+Enterprise-grade bulk block tool for Twitter/X using GraphQL/REST APIs with advanced caching, retry logic, and safety checks.
 
 ### 技術スタック
-- **Python 3.x** with requests, pytz, sqlite3
-- **Twitter GraphQL API v2 / REST API v1.1**
-- **SQLite with WAL mode** (高速並行処理)
-- **3層キャッシュアーキテクチャ** (Lookup/Profile/Relationship)
+- **言語**: Python
+- **フレームワーク**: N, /, A,  , (, p, u, r, e,  , s, t, a, n, d, a, r, d,  , l, i, b, r, a, r, y,  , +,  , r, e, q, u, e, s, t, s, )
+- **パッケージマネージャー**: pip
+- **主要な依存関係**:
+  - requests>=2.31.0
+  - pytz>=2023.3
 
-### アーキテクチャ
-```
-twitter_blocker/
-├── api.py          # Twitter API管理（GraphQL/REST）+ 3層キャッシュ
-├── database.py     # SQLite管理 + 永続的失敗キャッシュ + バッチ最適化
-├── manager.py      # ワークフロー制御 + バッチ処理制御 + セッション管理
-├── config.py       # 設定・スキーマ・Cookie管理
-├── retry.py        # リトライ判定ロジック（永続的/一時的失敗分類）
-└── stats.py        # 統計表示・分析・詳細レポート
-```
+## 重要ルール
+- 会話言語: 日本語
+- PR とコミットは Conventional Commits に従う。
+- PR タイトルとコミット本文の言語: PR タイトルは Conventional Commits 形式（英語推奨）。PR 本文は日本語。コミットは Conventional Commits 形式（description は日本語）。
+- コメント言語: 日本語
+- エラーメッセージ: 英語
+- 日本語と英数字の間には半角スペースを入れる。
+- 既存のプロジェクトルールがある場合はそれを優先する。
 
-## 基本開発方針
+## 環境のルール
+- ブランチ命名は Conventional Branch に従う。
+- GitHub リポジトリを調査する場合はテンポラリディレクトリに `git clone` して検索する。
+- Windows 環境では Git Bash を使用する。
+- Renovate の既存 PR には追加コミットしない。
 
-### コード品質基準
-- **パフォーマンス要求**: 50件/秒以上、キャッシュヒット率80%以上維持
-- **永続的失敗の事前チェック**: suspended/not_found/deactivatedでAPI呼び出し回避
-- **バッチ処理必須**: N+1問題の徹底回避
-- **リソース管理**: SQLite接続はcontext manager必須使用
-- **スクリプト開発方針**: check-cinnamonなどの監視スクリプトは実行時間より機能性・正確性を優先
-  - 高速版・最適化版などのバリエーションは作成しない（単一バージョンを維持）
-  - 機能の切り替えが必要な場合はコマンドラインオプションで対応
+## Git Worktree
+- 使う場合は `.bare/<branch>` 構成で作成する。
 
-### 実装パターン
-```python
-# ✅ 推奨: バッチ処理 + 事前チェック
-permanent_failures = self.database.get_permanent_failures_batch(batch_ids, user_format)
-for user_id in batch_ids:
-    if user_id in permanent_failures:
-        continue  # API呼び出しスキップ
+## ブラウザ操作
+- 座標ではなくセレクターで要素を特定する。
+- 実装と画面の差異を確認し、必要に応じて実装を改善する。
 
-# ❌ 避ける: 個別処理でのN+1問題
-for user in users:
-    if self.database.is_permanent_failure(user):  # 個別DB呼び出し
-        continue
-```
+## コード改修時のルール
+- 既存のエラーメッセージで先頭に絵文字がある場合、全体で統一する。
+- TypeScript 使用時は `skipLibCheck` で回避しない。
+- 関数やインターフェースには docstring（JSDoc など）を記載する。
 
-### エラーハンドリング
-- **永続的失敗**: suspended, not_found, deactivated (API呼び出し禁止)
-- **一時的失敗**: unavailable, rate_limit, server_error (リトライ対象)
-- **認証エラー**: Cookie再読み込み + 自動復旧フロー
+### コーディング規約
+- **design**: Modular 6-file architecture
+- **cache**: 3-layer caching (Lookup/Profile/Relationship)
+- **database**: SQLite with WAL mode
+- **error_handling**: Permanent vs temporary failure classification
+- **performance**: Target: 50+ users/second with 80%+ cache hit rate
 
-## 詳細ドキュメント参照
+## 相談ルール
+- Codex CLI: 実装レビュー、局所設計、整合性確認に使う。
+- Gemini CLI: 外部仕様や最新情報の確認に使う。
+- 他エージェントの指摘は黙殺せず、採用または理由を明記して不採用とする。
 
-プロジェクト固有の深層知識は以下で参照：
-
-### 開発ガイド
-- `.claude/guides/api-patterns.md` - Twitter API操作パターン詳細
-- `.claude/guides/performance-optimization.md` - パフォーマンス最適化手法
-- `.claude/guides/error-handling.md` - エラーパターン完全マッピング
-- `.claude/guides/caching-strategy.md` - 3層キャッシュ戦略詳細
-
-### 実装パターン
-- `.claude/patterns/recommended.md` - 推奨実装パターン集
-- `.claude/patterns/anti-patterns.md` - 避けるべきアンチパターン
-- `.claude/patterns/code-review.md` - コードレビュー観点
-
-### ワークフロー
-- `.claude/workflows/issue-handling.md` - Issue対応完全自動化プロセス
-- `.claude/workflows/emergency.md` - 緊急事態対応プロトコル
-
-### 開発ワークフロー方針
-- **PR管理ルール**: 既存のオープンPRがある場合は、新規PRではなく既存PRに追加コミットを推奨
-- **コンフリクト防止**: 同じファイル・機能領域の修正は既存PRにまとめることで、マージ時のコンフリクトを回避
-- **レビュー効率**: 関連する変更を一つのPRで管理し、一貫したレビュープロセスを実現
-- **判定基準**:
-  - 同じファイルを編集する場合 → 既存PRに追加
-  - 同じ機能領域の修正 → 既存PRに追加
-  - 関連するバグ修正 → 既存PRに追加
-  - 完全に独立した新機能 → 新規PR作成可
-
-### 運用管理
-- `.claude/operations/cinnamon-server.md` - 本番Cinnamonサーバー運用ガイド
-
-### トラブルシューティング
-- `.claude/troubleshooting/common-issues.md` - よくある問題と解決手順
-
-### 品質保証
-- `.claude/quality/testing-guide.md` - テスト戦略・モック実装・CI設定
-
-## 🔑 Cinnamonサーバー接続方法（重要）
-
-⚠️ **Claude Code使用時の必須注意事項**
-
-### ✅ 正しい接続方法
+### 開発コマンド
 ```bash
-ssh Cinnamon  # 必ずこの形式を使用
+# install
+pip install -r requirements.txt
+
+# dev
+python3 -m twitter_blocker [options]
+
+# build
+docker build -t twitter-blocker .
+
+# test
+python3 -m py_compile twitter_blocker/*.py
+
 ```
 
-### ❌ 間違った接続方法（絶対に使用禁止）
-```bash
-ssh ope@cinnamon.oimo.io         # ホスト名解決エラー
-ssh ope@183.90.238.206          # IP直接（タイムアウト）
-```
+### プロジェクト構造
 
-📋 **詳細**: `.claude/cinnamon-connection.md` 参照
+**主要ディレクトリ:**
+- `twitter_blocker/ (core package)`
+- `docker/ (Docker configuration)`
 
-## クイックリファレンス
+**重要ファイル:**
+- `twitter_blocker/__main__.py (entry point)`
+- `twitter_blocker/api.py (GraphQL/REST + 3-layer cache)`
+- `twitter_blocker/database.py (SQLite management)`
+- `twitter_blocker/manager.py (workflow control)`
+- `twitter_blocker/config.py (configuration)`
+- `twitter_blocker/retry.py (retry logic)`
+- `twitter_blocker/stats.py (statistics)`
 
-### よく使うコマンド
-```bash
-# 開発環境
-python3 -m py_compile twitter_blocker/*.py  # 全品質チェック
-/check-api-status                          # APIステータス確認
-/analyze-performance database              # パフォーマンス分析
-/debug-issue "問題の説明"                    # 緊急デバッグ
+## 実装パターン
+- 既存のコードパターンに従う。
+- プロジェクト固有の実装ガイドラインがある場合はそれに従う。
 
-# 拡張ヘッダー機能テスト
-python3 -m twitter_blocker --test-user "username" --debug --enable-forwarded-for
-python3 -m twitter_blocker --all --disable-header-enhancement  # 緊急時無効化
+## テスト
+- 方針: 変更内容に応じてテストを追加する。
 
-# 本番環境（Cinnamonサーバー）
-/project:check-cinnamon                    # サーバー包括的状態分析（長期履歴対応）
-/project:restart-service [service_name]    # サービス再起動（引数省略で全サービス）
-/project:debug-issue "問題の説明"           # 詳細問題調査とデバッグ
+## ドキュメント更新ルール
+- 更新タイミング: 実装確定後、同一コミットまたは追加コミットで更新する。
+- README、API ドキュメント、コメント等は常に最新状態を保つ。
 
-# 開発・運用コマンド
-/project:check-api-status [target]         # API・キャッシュ状態確認
-/project:analyze-performance [target]      # パフォーマンス分析とボトルネック特定
-/project:optimize-batch [target]           # バッチ処理最適化
-/project:test-feature [feature_name]       # 機能テスト実行
+## 作業チェックリスト
 
-# バージョン管理・リリース監視
-.claude/commands/check-latest-release      # GitHub最新リリース確認
-.claude/commands/update-containers         # コンテナイメージ更新
-.claude/commands/monitor-releases          # リリース監視・自動更新
-.claude/commands/wait-for-deployment       # デプロイ完了待機
+### 新規改修時
+1. プロジェクトを理解する。
+2. 作業ブランチが適切であることを確認する。
+3. 最新のリモートブランチに基づいた新規ブランチであることを確認する。
+4. PR がクローズされた不要ブランチが削除済みであることを確認する。
+5. 指定されたパッケージマネージャーで依存関係をインストールする。
 
-# 監視ツールスイート v2.1 (長期履歴対応)
-.claude/commands/check-cinnamon             # 包括的分析 (バージョン情報・24時間エラー履歴対応)
-.claude/cinnamon-monitor-suite.sh [mode]   # 統合監視インターフェース (非対話型)
-.claude/cinnamon-logs-ai-optimized.sh      # AI最適化版・構造化出力
-.claude/cinnamon-logs.sh                   # 基本版 (参考用)
-```
+### コミット・プッシュ前
+1. Conventional Commits に従っていることを確認する。
+2. センシティブな情報が含まれていないことを確認する。
+3. Lint / Format エラーがないことを確認する。
+4. 動作確認を行う。
 
-## 📊 Cinnamonサーバー監視ツールスイート
+### PR 作成前
+1. PR 作成の依頼があることを確認する。
+2. センシティブな情報が含まれていないことを確認する。
+3. コンフリクトの恐れがないことを確認する。
 
-### 統合監視システム
-```bash
-# メインインターフェース（推奨）
-.claude/cinnamon-monitor-suite.sh
-# インタラクティブメニューで全ツールにアクセス
-```
+### PR 作成後
+1. コンフリクトがないことを確認する。
+2. PR 本文が最新状態のみを網羅していることを確認する。
+3. `gh pr checks <PR ID> --watch` で CI を確認する。
+4. Copilot レビューに対応し、コメントに返信する。
+5. Codex のコードレビューを実施し、指摘対応を行う。
+6. PR 本文の崩れがないことを確認する。
 
-### 個別ツール詳細
-```bash
-# 🤖 AI最適化版（メイン）
-.claude/cinnamon-logs-ai-optimized.sh
-# Claude Code向け構造化出力・問題根本原因特定・修正提案
-
-# 🔍 基本監視（参考用）
-.claude/cinnamon-logs.sh
-# 従来版・人間向け出力
-
-# 🎛️ 統合インターフェース
-.claude/cinnamon-monitor-suite.sh [mode]
-# 引数ベース非対話型・複数分析手法への統一アクセス
-# 例: .claude/cinnamon-monitor-suite.sh ai
-```
-
-### 監視ツール使い分けガイド
-| 状況 | 推奨ツール | 実行方法 | 備考 |
-|------|------------|----------|------|
-| **📊 包括的分析（推奨）** | メイン版 | `.claude/commands/check-cinnamon` | バージョン情報・全機能搭載・詳細分析 |
-| **🔢 バージョン確認のみ** | リリース確認 | `.claude/commands/check-latest-release` | GitHub最新リリース・稼働中比較 |
-| **🚀 コンテナ更新** | 更新コマンド | `.claude/commands/update-containers` | 安全な更新・デプロイ待機統合 |
-| **🔄 自動リリース監視** | リリース監視 | `.claude/commands/monitor-releases --auto-update` | 新リリース検出・自動更新 |
-| **🔍 詳細分析** | 包括的分析（旧版） | `.claude/commands/check-cinnamon-original-backup` | 比較・参照用 |
-| **🆕 長期履歴分析** | メイン版で対応 | `.claude/commands/check-cinnamon` | 24時間エラー履歴対応 |
-| **Claude Code標準** | AI最適化版 | `cinnamon-logs-ai-optimized.sh` | 構造化出力 |
-| **問題詳細調査** | AI最適化版 | `cinnamon-logs-ai-optimized.sh` | 根本原因分析 |
-| **基本チェック** | 統合インターフェース | `cinnamon-monitor-suite.sh basic` | 基本監視 |
-| **緊急対応** | 統合インターフェース | `cinnamon-monitor-suite.sh emergency` | 即時対応 |
-
-### Claude Code分析システム
-```bash
-# 📊 包括分析コマンド（推奨）
-.claude/commands/check-cinnamon
-# 特徴: 詳細な分析機能、24時間エラー履歴、実行メタデータ収集
-# 注: 実行時間の高速化は優先事項ではありません。機能性と正確性を重視
-
-# 🔄 従来版包括分析（詳細調査・比較用）
-.claude/commands/check-cinnamon-original-backup
-# 特徴: 24時間エラー履歴、実行メタデータ収集、自動改善提案
-
-# AI最適化版での問題特定・修正提案
-.claude/cinnamon-logs-ai-optimized.sh
-
-# 重要度別分類
-# 🚨 CRITICAL: 即座の修正が必要（KeyError等のコード問題）
-# ⚠️ WARNING: 注意が必要（認証エラー、パフォーマンス低下）
-# ℹ️ INFO: 情報提供レベル（最適化提案）
-# ✅ OK: 正常状態の確認
-
-# 🔄 自己改善機能
-# 📊 実行メタデータ収集: 性能指標、検出精度の自動記録
-# 📈 履歴トレンド分析: 過去実行との比較・改善傾向判定
-# 💡 自動改善提案: 具体的な最適化案の生成
-# 🚨 緊急改善検出: 重大な性能低下時の即座アラート
-```
-
-### 重要な数値
-- **GraphQLレート制限**: 150リクエスト/15分
-- **RESTレート制限**: 300ブロック/15分
-- **最適バッチサイズ**: 50件
-- **キャッシュTTL**: 30日
-- **目標処理速度**: 50件/秒以上
-
-### 🔧 新機能: 拡張ヘッダー対応 (Issue #38)
-- **動的ヘッダー生成**: Twitter/Xアンチボットシステム対応
-- **段階的導入**: `--disable-header-enhancement`、`--enable-forwarded-for`オプション
-- **詳細**: `.claude/guides/api-patterns.md` 参照
-
-### 🔢 新機能: 高度なバージョン管理システム
-- **動的バージョン取得**: Git・環境変数・ファイルベースの優先順位システム
-- **--versionオプション**: `python3 -m twitter_blocker --version` で現在バージョン表示
-- **GitHub連携**: リリース監視・自動更新・整合性確認
-- **運用統合**: check-cinnamon、update-containers、monitor-releasesの連携システム
-- **Docker対応**: APPLICATION_VERSION、.app-versionファイル埋め込み
-
----
-
-この基本方針と詳細ドキュメントにより、効率的で高品質なtwitter-bulk-blocker開発を実現します。
-詳細が必要な場合は該当する.claudeドキュメントを参照してください。
+## リポジトリ固有
+- **architecture**: High-performance batch processing with N+1 prevention
+- **authentication**: Cookie-based (X.com export)
+- **api_limits**: GraphQL: 150/15min, REST: 300 blocks/15min
+**safety_features:**
+  - Duplicate prevention (SQLite persistent history)
+  - Follow relationship check (skips followers/following)
+  - Advanced retry with backoff (up to 10 retries)
+  - suspended/not_found permanent failure skip
+  - Enhanced headers for anti-bot (x-client-transaction-id)
+**operations:**
+  - Test mode (first 5 users)
+  - Auto-retry with exponential backoff
+  - Debug mode with detailed logging
+  - Statistics and error analysis

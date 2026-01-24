@@ -25,3 +25,17 @@
 - ログに機密情報を出力しない。
 
 ## リポジトリ固有
+- **architecture**: High-performance batch processing with N+1 prevention
+- **authentication**: Cookie-based (X.com export)
+- **api_limits**: GraphQL: 150/15min, REST: 300 blocks/15min
+**safety_features:**
+  - Duplicate prevention (SQLite persistent history)
+  - Follow relationship check (skips followers/following)
+  - Advanced retry with backoff (up to 10 retries)
+  - suspended/not_found permanent failure skip
+  - Enhanced headers for anti-bot (x-client-transaction-id)
+**operations:**
+  - Test mode (first 5 users)
+  - Auto-retry with exponential backoff
+  - Debug mode with detailed logging
+  - Statistics and error analysis
