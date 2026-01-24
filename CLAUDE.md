@@ -53,7 +53,6 @@ for user in users:
 - **一時的失敗**: unavailable, rate_limit, server_error (リトライ対象)
 - **認証エラー**: Cookie再読み込み + 自動復旧フロー
 
-
 ## 詳細ドキュメント参照
 
 プロジェクト固有の深層知識は以下で参照：
