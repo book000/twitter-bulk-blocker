@@ -2,7 +2,7 @@
 
 ## 目的
 
-このドキュメントは、汎用 AI エージェントが Twitter Bulk Blocker プロジェクトで作業する際の共通方針とルールを定義します。
+このドキュメントは、汎用 AI エージェントが Twitter Bulk Blocker プロジェクトで作業する際の共通方針とルールを定義します。既存の `.github/copilot-instructions.md` および `CLAUDE.md` と併せて参照してください。
 
 ## 基本方針
 
@@ -10,15 +10,15 @@
 
 - **会話は日本語**で行う
 - **コード内コメント**は日本語で記載する
-- **エラーメッセージ**は英語で記載する
+- **エラーメッセージ**は日本語で記載する
 - **日本語と英数字の間**には半角スペースを挿入する
 
 ### コミット規約
 
 - **コミットメッセージ**: [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) に従う
   - `<type>(<scope>): <description>` 形式
-  - `<description>` は日本語で記載
-  - 例: `feat: ユーザー認証機能を追加`
+  - `<description>` は英語で記載
+  - 例: `feat: add user authentication feature`
 - **ブランチ命名**: [Conventional Branch](https://conventional-branch.github.io) に従う
   - `<type>/<description>` 形式
   - `<type>` は短縮形（feat, fix）を使用
@@ -68,6 +68,7 @@ twitter_blocker/
 ├── manager.py      # ワークフロー制御 + バッチ処理制御 + セッション管理
 ├── config.py       # 設定・スキーマ・Cookie 管理
 ├── retry.py        # リトライ判定ロジック（永続的/一時的失敗分類）
+├── version.py      # バージョン管理システム
 └── stats.py        # 統計表示・分析・詳細レポート
 ```
 
