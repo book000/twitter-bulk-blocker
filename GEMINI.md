@@ -11,7 +11,7 @@
 - **会話言語**: 日本語
 - **説明のトーン**: 明確で簡潔、技術的に正確
 - **コード内コメント**: 日本語
-- **エラーメッセージ**: 日本語
+- **エラーメッセージ**: 日本語（プロジェクト規約に準拠）
 
 ### 出力形式
 
@@ -114,8 +114,8 @@ Gemini CLI は以下の領域で Claude Code をサポートします：
 
 ### エラーメッセージ言語
 
-- **プログラム内のエラーメッセージ**: 英語
-- **ログメッセージ**: 英語（デバッグ情報）、日本語（ユーザー向け情報）
+- **プログラム内のエラーメッセージ**: 日本語（プロジェクト規約に準拠）
+- **ログメッセージ**: 日本語（ユーザー向け情報）、英語（デバッグ情報も可）
 
 ## 開発コマンド
 
@@ -167,11 +167,14 @@ docker build -t twitter-blocker .
 # ヘルプ表示
 docker run --rm twitter-blocker
 
-# 統計表示
-docker run --rm -v ./data:/app/data -e TWITTER_COOKIES_PATH=/app/data/cookies.json -e TWITTER_USERS_FILE=/app/data/users.json twitter-blocker --stats
+# 統計表示（デフォルト環境変数を使用）
+docker run --rm -v ./data:/data twitter-blocker --stats
 
-# 本格実行
-docker run --rm -v ./data:/app/data -e TWITTER_COOKIES_PATH=/app/data/cookies.json -e TWITTER_USERS_FILE=/app/data/users.json twitter-blocker --all --auto-retry
+# 本格実行（デフォルト環境変数を使用）
+docker run --rm -v ./data:/data twitter-blocker --all --auto-retry
+
+# または /app/data にマウントする場合は環境変数で明示的にオーバーライド
+docker run --rm -v ./data:/app/data -e TWITTER_COOKIES_PATH=/app/data/cookies.json -e TWITTER_USERS_FILE=/app/data/users.json twitter-blocker --stats
 ```
 
 ## 注意事項
@@ -243,8 +246,8 @@ docker run --rm -v ./data:/app/data -e TWITTER_COOKIES_PATH=/app/data/cookies.js
 
 ### Docker 制約
 
-- **ボリュームマウント**: `/app/data` ディレクトリへのマウントが必要
-- **環境変数**: Dockerfile のデフォルト値（`/data/*`）と異なるパスを使用する場合は、TWITTER_COOKIES_PATH、TWITTER_USERS_FILE などの環境変数でオーバーライドが必要
+- **ボリュームマウント**: `/data` ディレクトリへのマウントを推奨（Dockerfile デフォルト）。`/app/data` にマウントする場合は環境変数でパスをオーバーライド
+- **環境変数**: Dockerfile のデフォルト値は `/data/*` を指定。異なるパスを使用する場合は TWITTER_COOKIES_PATH、TWITTER_USERS_FILE などの環境変数でオーバーライドが必要
 
 ## リポジトリ固有の重要事項
 
