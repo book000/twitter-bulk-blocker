@@ -36,7 +36,7 @@ jobs:
 
       # 2. Python環境のセットアップ
       - name: "🐍 Setup Python Environment"
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: 'pip'  # pip キャッシュを有効化
