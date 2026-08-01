@@ -1,0 +1,13 @@
+.env
+cookies.json
+*.cookies.json
+cookies_*.json
+video_misuse_detecteds.json
+*_users.json
+users_*.json
+block_targets.json
+target_users.json
+block_history.db
+*.db
+*.sqlite
+*.sqlite3
