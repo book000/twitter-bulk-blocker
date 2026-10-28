@@ -1,4 +1,4 @@
-FROM python:3.14.8-slim
+FROM python:3.15.1-slim
 
 WORKDIR /app
 
@@ -24,7 +24,7 @@ ENV TZ=Asia/Tokyo \
 
 COPY requirements.txt ./
 
-RUN python -m pip install --no-cache-dir --upgrade pip==25.1.1 && \
+RUN python -m pip install --no-cache-dir --upgrade pip==26.2.2 && \
     pip install --no-cache-dir -r requirements.txt
 
 RUN mkdir -p /app/data && \
