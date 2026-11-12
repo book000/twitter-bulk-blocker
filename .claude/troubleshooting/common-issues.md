@@ -51,16 +51,14 @@ To fix: copy the current `features` query parameter from a real `UserByScreenNam
 - Rows with `status='failed'` are retried by `--retry` (or `--all --auto-retry`).
 - Retry decisions come from `RetryManager.should_retry`: at most `MAX_RETRIES = 10` retries; `not_found`, `deactivated`, `suspended` are permanent; `unavailable` and status codes 403/429/500/502/503/504 are retried.
 - `--reset-retry` zeroes retry counts, `--clear-errors` clears error messages, `--reset-failed` resets error message, retry count, response code and user status of all failed rows.
-- Caveat: `--reset-retry` and `--reset-failed` also set `last_retry_at = NULL` (`reset_retry_counts`, `reset_failed_users` in `database.py`), and `get_retry_candidates` only returns rows with a non-NULL `last_retry_at`, so right after such a reset `--retry` finds nothing for those rows. `--clear-errors` was not verified to leave `last_retry_at` intact; check `database.py` before relying on it.
+- `--clear-errors` (`clear_error_messages` in `database.py`) only sets `error_message = NULL` on failed rows and leaves `last_retry_at` untouched.
 - `--debug-errors` prints sample stored error messages.
 
 ## "User not found" / suspended users
 
 - A lookup that reports the user as missing, suspended or deactivated is recorded in `block_history` as `status='failed'` with `user_status` set (`not_found`, `suspended`, `deactivated`).
 - `--stats` shows the counts (`suspended`, and `unavailable` which also covers `not_found` / `deactivated`).
-- Intended behavior: `RetryManager.should_retry` treats these as permanent and the error message gets a `(permanent)` suffix.
-  Actual behavior today: `_check_user_unavailable` / `_execute_block` in `manager.py` test the `should_retry` tuple as a boolean, so every such user is recorded as retryable, without the suffix (see the known-issue note in `guides/error-handling.md`).
-  Expect them to show up again in `--retry` candidates until that is fixed.
+- `RetryManager.should_retry` treats these as permanent, the stored error message gets a `(permanent)` suffix, and later runs skip them without an API call.
 
 ## SQLite
 

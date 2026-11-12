@@ -47,15 +47,11 @@ Matching is by substring, so the first matching rule wins even when a later rule
 
 ## Failed-user retries (`--retry`)
 
-`DatabaseManager.get_retry_candidates()` returns `block_history` rows with `status = 'failed'`, `retry_count < 10`, a transient-looking failure (`user_status = 'unavailable'`, response code 429/5xx or NULL, or a retryable message), and a non-NULL `last_retry_at` that is at least `30 * 2**retry_count` seconds old.
+`DatabaseManager.get_retry_candidates()` returns `block_history` rows with `status = 'failed'`, `retry_count < 10`, a transient-looking failure (`user_status = 'unavailable'`, response code 429/5xx or NULL, or a retryable message), and either a NULL `last_retry_at` (set by `--reset-retry` / `--reset-failed`; no backoff pending) or a non-NULL `last_retry_at` that is at least `30 * 2**retry_count` seconds old.
 `--reset-retry`, `--clear-errors` and `--reset-failed` reset the retry counters, error messages, or both plus the status of failed users.
 
 `is_permanent_failure()` and `get_permanent_failures_batch()` apply `RetryManager.should_retry` to a user's failed row to decide whether to skip the user.
 `BulkBlockManager` calls the batch version once per batch before any API lookup.
-
-> Known issue: both functions negate the tuple returned by `should_retry` (see above), so they never report a permanent failure.
-> The two `if self.retry_manager.should_retry(...)` checks in `manager.py` (`_check_user_unavailable`, `_execute_block`) have the opposite problem and are always true.
-> Fix by indexing `should_retry(...)[0]`.
 
 ## HTTP-level recovery in `TwitterAPI`
 

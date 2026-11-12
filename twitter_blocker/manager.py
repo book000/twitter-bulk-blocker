@@ -457,7 +457,7 @@ class BulkBlockManager:
                 stats["skipped"] += 1
                 return
 
-            # Intended: skip known permanent failures before any API call (NOTE: currently never skips, see Database.is_permanent_failure)
+            # Skip known permanent failures before any API call
             if self.database.is_permanent_failure(lookup_key, user_format):
                 failure_info = self.database.get_permanent_failure_info(lookup_key, user_format)
                 user_status = failure_info.get("user_status", "unknown") if failure_info else "unknown"
@@ -546,7 +546,7 @@ class BulkBlockManager:
         )
 
         try:
-            # Intended: skip known permanent failures (NOTE: currently never skips, see Database.is_permanent_failure)
+            # Skip known permanent failures
             if self.database.is_permanent_failure(screen_name, "screen_name"):
                 failure_info = self.database.get_permanent_failure_info(screen_name, "screen_name")
                 user_status = failure_info.get("user_status", "unknown") if failure_info else "unknown"
@@ -630,8 +630,6 @@ class BulkBlockManager:
 
         Args:
             retry_count: Value stored in the recorded row. A retry must pass the incremented count, otherwise the retry limit never takes effect.
-
-        NOTE: every such user is currently recorded as retryable, because should_retry returns a tuple (always truthy) so the "(permanent)" branch is unreachable.
         """
         if user_info.get("unavailable", False):
             user_status = user_info.get("user_status", "unavailable")
@@ -640,7 +638,7 @@ class BulkBlockManager:
 
             if self.retry_manager.should_retry(
                 user_status, 0, f"User {user_status}", 0
-            ):
+            )[0]:
                 print("    → リトライ対象として記録")
                 self.database.record_block_result(
                     screen_name,
@@ -718,8 +716,6 @@ class BulkBlockManager:
 
         Args:
             retry_count: Value stored in the recorded row. A retry must pass the incremented count, otherwise the retry limit never takes effect.
-
-        NOTE: the retryable/permanent split below is currently ineffective (should_retry returns a tuple, so every failure is recorded as retryable).
         """
         print(f"  → ブロック実行: {user_info['name']} (ID: {user_info['id']})")
         block_result = self.api.block_user(user_info["id"], screen_name)
@@ -746,7 +742,6 @@ class BulkBlockManager:
             status_code = block_result.get("status_code", 0)
             print(f"  ✗ ブロック失敗: {status_code} - {error_msg}")
 
-            # Intended: classify as retryable or permanent (NOTE: should_retry returns a tuple, so the else branch is unreachable)
             user_status = user_info.get("user_status", "active")
             status_code = block_result.get("status_code", 0)
             error_message = block_result.get("message", "Unknown error")
@@ -756,7 +751,7 @@ class BulkBlockManager:
                 status_code,
                 error_message,
                 0,
-            ):
+            )[0]:
                 print("    → リトライ対象として記録")
                 stats["errors"] += 1
                 self.database.record_block_result(

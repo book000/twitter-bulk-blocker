@@ -237,7 +237,8 @@ class DatabaseManager:
         """Return failed users that are retryable and past their backoff delay.
 
         Only rows below the retry limit with a transient-looking failure qualify,
-        oldest last_retry_at first. Rows with NULL last_retry_at are never returned.
+        oldest last_retry_at first. Rows with NULL last_retry_at (set by reset_retry_counts /
+        reset_failed_users) have no backoff pending and are always returned.
 
         Returns:
             Dicts with screen_name, user_id, display_name, retry_count, user_status, last_error.
@@ -285,18 +286,19 @@ class DatabaseManager:
             if last_retry_str:
                 last_retry = datetime.fromisoformat(last_retry_str)
                 required_delay = self._get_retry_delay(retry_count)
+                if (current_time - last_retry).total_seconds() < required_delay:
+                    continue
 
-                if (current_time - last_retry).total_seconds() >= required_delay:
-                    candidates.append(
-                        {
-                            "screen_name": screen_name,
-                            "user_id": user_id,
-                            "display_name": display_name,
-                            "retry_count": retry_count,
-                            "user_status": user_status,
-                            "last_error": error_message,
-                        }
-                    )
+            candidates.append(
+                {
+                    "screen_name": screen_name,
+                    "user_id": user_id,
+                    "display_name": display_name,
+                    "retry_count": retry_count,
+                    "user_status": user_status,
+                    "last_error": error_message,
+                }
+            )
 
         conn.close()
         return candidates
@@ -619,10 +621,7 @@ class DatabaseManager:
         return affected_rows
 
     def is_permanent_failure(self, identifier: str, user_format: str = "screen_name") -> bool:
-        """Intended: return True if the user has a failed row that RetryManager says should not be retried.
-
-        NOTE: currently always False, because RetryManager.should_retry returns a tuple (always truthy), so `not should_retry(...)` is never True.
-        """
+        """Return True if the user has a failed row that RetryManager says should not be retried."""
         from .retry import RetryManager
         
         with sqlite3.connect(self.db_file) as conn:
@@ -660,7 +659,7 @@ class DatabaseManager:
             response_code or 0,
             error_message or "",
             retry_count or 0
-        )
+        )[0]
 
     def get_permanent_failure_info(self, identifier: str, user_format: str = "screen_name") -> Optional[Dict[str, Any]]:
         """Return details of the user's failed row, or None if there is none.
@@ -714,10 +713,8 @@ class DatabaseManager:
     def get_permanent_failures_batch(self, identifiers: List[str], user_format: str = "screen_name") -> Dict[str, Dict[str, Any]]:
         """Batch version of is_permanent_failure plus get_permanent_failure_info.
 
-        NOTE: currently always returns {} (same cause as is_permanent_failure: `not should_retry(...)` on a tuple is always False).
-
         Returns:
-            Intended: dict keyed by user_id or screen_name (per user_format) of failed users that
+            Dict keyed by user_id or screen_name (per user_format) of failed users that
             RetryManager says should not be retried.
         """
         from .retry import RetryManager
@@ -765,7 +762,7 @@ class DatabaseManager:
                 response_code or 0,
                 error_message or "",
                 retry_count or 0
-            )
+            )[0]
             
             if is_permanent:
                 results[key] = {
