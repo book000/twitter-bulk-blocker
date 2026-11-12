@@ -671,10 +671,7 @@ class BulkBlockManager:
     def _execute_block(
         self, user_info: Dict[str, Any], screen_name: str, stats: Dict[str, int]
     ) -> None:
-        """Block the user via the API and record the outcome.
-
-        NOTE: block_user returns "message" while this reads "error_message", so the stored error message is always "Unknown error".
-        """
+        """Block the user via the API and record the outcome."""
         print(f"  → ブロック実行: {user_info['name']} (ID: {user_info['id']})")
         block_result = self.api.block_user(user_info["id"], screen_name)
 
@@ -692,8 +689,8 @@ class BulkBlockManager:
             )
         else:
             error_msg = (
-                block_result.get("error_message", "Unknown error")[:200]
-                if block_result.get("error_message")
+                block_result.get("message", "Unknown error")[:200]
+                if block_result.get("message")
                 else "Unknown error"
             )
             status_code = block_result.get("status_code", 0)
@@ -701,8 +698,8 @@ class BulkBlockManager:
 
             user_status = user_info.get("user_status", "active")
             status_code = block_result.get("status_code", 0)
-            error_message = block_result.get("error_message", "Unknown error")
-            
+            error_message = block_result.get("message", "Unknown error")
+
             if self.retry_manager.should_retry(
                 user_status,
                 status_code,
