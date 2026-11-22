@@ -1203,7 +1203,6 @@ class TwitterAPI:
                 print(f"🔄 403エラー蓄積による強制リトライ対象: {identifier}")
                 print(f"⏸️ 緊急停止: 20回エラー到達により処理を一時停止しました")
                 # Pause after the forced refresh so repeated 403s cannot trigger an endless refresh loop (see a6aa041)
-                import time
                 time.sleep(10)
                 # Retrying is the caller's responsibility
             
