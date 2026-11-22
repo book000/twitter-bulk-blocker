@@ -18,7 +18,8 @@ Guidance for AI coding agents and contributors. `CLAUDE.md` imports this file, a
 ```bash
 pip install -r requirements.txt                  # requests, pytz
 export CACHE_DIR=./cache                         # outside Docker: runs past argument parsing create it; default /data/cache
-python3 -m py_compile twitter_blocker/*.py       # syntax check (the only local quality gate)
+python3 -m py_compile twitter_blocker/*.py       # syntax check
+python3 -m unittest discover -s tests -p '*_test.py'   # unit tests (stdlib unittest; needs requirements installed)
 python3 -m twitter_blocker --help                # list options
 python3 -m twitter_blocker --stats               # statistics only; changes nothing
 python3 -m twitter_blocker --debug --test-user <name>   # look up one user, never blocks
@@ -29,7 +30,7 @@ docker run --rm -v "$(pwd)/data:/data" twitter-blocker --stats
 
 Running without `--all` is **not** a dry run: it blocks the first 5 remaining users. Do not run the tool against a real account unless the task requires it.
 
-There is no committed test suite and CI does not lint or test. `.github/workflows/copilot-setup-steps.yml` installs `black`, `flake8`, `mypy` and `pytest` for the Copilot agent, but nothing enforces them. Do not claim tests pass; verify behavior with `--debug --test-user` or against a throwaway users file, cookie file and `--db`.
+There is a small `unittest` set under `tests/`; name test files `*_test.py` because `.gitignore` ignores `test_*.py`. CI does not run it, lint or test. `.github/workflows/copilot-setup-steps.yml` installs `black`, `flake8`, `mypy` and `pytest` for the Copilot agent, but nothing enforces them. Do not claim tests pass; verify behavior with `--debug --test-user` or against a throwaway users file, cookie file and `--db`.
 
 ## Structure
 
@@ -40,6 +41,7 @@ There is no committed test suite and CI does not lint or test. `.github/workflow
 - `config.py`: users-file schema (`{"format": "screen_name" | "user_id", "users": [...]}`) and cookie loading.
 - `retry.py`: failure classification (permanent vs. temporary) and adaptive backoff.
 - `stats.py`, `error_analytics.py`, `performance_monitor.py`, `user_status_monitor.py`: statistics and analytics. `version.py`: version resolution.
+- `tests/`: stdlib `unittest` tests, named `*_test.py`.
 - `Dockerfile`: Python image, runs as UID 1000 with defaults pointing at `/data/...`.
 - `.claude/`: Claude Code slash commands and docs for operating the production deployment through the `Cinnamon` SSH alias. Read the relevant file under `.claude/` only when the task needs it (`guides/`, `patterns/`, `workflows/`, `troubleshooting/`, `operations/`, `commands/`).
 
