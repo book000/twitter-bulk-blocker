@@ -3,7 +3,9 @@
 import sqlite3
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+
+from .retry import RetryManager
 
 
 class DatabaseManager:
@@ -233,6 +235,18 @@ class DatabaseManager:
         conn.commit()
         conn.close()
 
+    @staticmethod
+    def _retryable_failure_clause() -> Tuple[str, List[Any]]:
+        """Return an SQL condition and its params for retryable HTTP codes and messages.
+
+        The code and message lists come from RetryManager. LIKE is ASCII case-insensitive, matching should_retry's lowercased comparison.
+        """
+        codes = RetryManager.RETRYABLE_STATUS_CODES
+        parts = [f"response_code IN ({', '.join('?' * len(codes))})"]
+        parts += ["error_message LIKE ?"] * len(RetryManager.RETRYABLE_MESSAGES)
+        params = list(codes) + [f"%{m}%" for m in RetryManager.RETRYABLE_MESSAGES]
+        return "(" + " OR ".join(parts) + ")", params
+
     def get_retry_candidates(self) -> List[Dict[str, Any]]:
         """Return failed users that are retryable and past their backoff delay.
 
@@ -246,25 +260,23 @@ class DatabaseManager:
         conn = sqlite3.connect(self.db_file)
         cursor = conn.cursor()
 
+        retryable_sql, retryable_params = self._retryable_failure_clause()
         cursor.execute(
-            """
-            SELECT screen_name, user_id, display_name, status, response_code, 
+            f"""
+            SELECT screen_name, user_id, display_name, status, response_code,
                    error_message, user_status, retry_count, last_retry_at
-            FROM block_history 
-            WHERE status = 'failed' 
+            FROM block_history
+            WHERE status = 'failed'
             AND retry_count < 10
             AND (
                 user_status IN ('unavailable') OR
-                response_code IN (429, 500, 502, 503, 504) OR
+                {retryable_sql} OR
                 response_code IS NULL OR
-                error_message LIKE '%temporarily%' OR
-                error_message LIKE '%rate limit%' OR
-                error_message LIKE '%timeout%' OR
-                error_message LIKE '%server error%' OR
                 error_message LIKE '%ユーザー情報取得失敗%'
             )
             ORDER BY last_retry_at ASC
-        """
+        """,
+            retryable_params,
         )
 
         candidates = []
@@ -329,22 +341,19 @@ class DatabaseManager:
             cursor.execute("SELECT COUNT(*) FROM block_history WHERE status = 'failed' AND retry_count >= 10")
             stats["failed_max_retries"] = cursor.fetchone()[0]
 
-            # Same transient criteria as get_retry_candidates, minus the NULL response_code and
-            # "ユーザー情報取得失敗" conditions.
+            # Like get_retry_candidates, minus the NULL response_code and "ユーザー情報取得失敗" conditions.
+            retryable_sql, retryable_params = self._retryable_failure_clause()
             cursor.execute(
-                """
-                SELECT COUNT(*) FROM block_history 
-                WHERE status = 'failed' 
+                f"""
+                SELECT COUNT(*) FROM block_history
+                WHERE status = 'failed'
                 AND retry_count < 10
                 AND (
                     user_status IN ('unavailable') OR
-                    response_code IN (429, 500, 502, 503, 504) OR
-                    error_message LIKE '%temporarily%' OR
-                    error_message LIKE '%rate limit%' OR
-                    error_message LIKE '%timeout%' OR
-                    error_message LIKE '%server error%'
+                    {retryable_sql}
                 )
-                """
+                """,
+                retryable_params,
             )
             stats["failed_retryable"] = cursor.fetchone()[0]
 
